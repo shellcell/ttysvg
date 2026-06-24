@@ -7,7 +7,7 @@ _ttysvg()
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    opts="-o -size -frame-ms -idle-ms -font-size -font-family -cell-width -cell-height -padding -theme -minify -query-terminal -query-terminal=true -query-terminal=false -clear -clear=true -clear=false -q -h -help --"
+    opts="-o -size -frame-ms -idle-ms -font-size -font-family -cell-width -cell-height -padding -theme -minify -query-terminal -query-terminal=true -query-terminal=false -clear -clear=true -clear=false -version -q -h -help --"
     themes="auto dark light"
     bools="true false"
 
