@@ -1,0 +1,8 @@
+/ttysvg
+/ttysvg.svg
+/bin/
+/dist/
+.DS_Store
+*.test
+*.out
+*.svg

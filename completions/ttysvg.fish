@@ -1,0 +1,18 @@
+# fish completion for ttysvg
+
+complete -c ttysvg -s o -r -F -d 'Output SVG file or directory'
+complete -c ttysvg -l size -r -d 'Terminal size as COLSxROWS'
+complete -c ttysvg -l frame-ms -r -d 'Minimum milliseconds between SVG frames'
+complete -c ttysvg -l idle-ms -r -d 'Capture after output silence in milliseconds'
+complete -c ttysvg -l font-size -r -d 'SVG font size in pixels'
+complete -c ttysvg -l font-family -r -d 'SVG CSS font-family'
+complete -c ttysvg -l cell-width -r -d 'SVG terminal cell width in pixels'
+complete -c ttysvg -l cell-height -r -d 'SVG terminal cell height in pixels'
+complete -c ttysvg -l padding -r -d 'SVG padding in pixels'
+complete -c ttysvg -l theme -x -a 'auto dark light' -d 'SVG theme'
+complete -c ttysvg -l minify -d 'Write SVG without optional whitespace'
+complete -c ttysvg -l query-terminal -x -a 'true false' -d 'Query current terminal colors before recording'
+complete -c ttysvg -l clear -x -a 'true false' -d 'Clear terminal before recording starts'
+complete -c ttysvg -s q -d 'Suppress progress and summary'
+complete -c ttysvg -s h -l help -d 'Show help'
+complete -c ttysvg -l -- -d 'Stop option parsing'

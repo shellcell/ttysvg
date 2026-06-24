@@ -1,0 +1,24 @@
+#compdef ttysvg
+
+_ttysvg() {
+  _arguments -C \
+    '-o+[output SVG file or directory]:path:_files' \
+    '-size+[terminal size as COLSxROWS]:size:' \
+    '-frame-ms+[minimum milliseconds between SVG frames]:milliseconds:' \
+    '-idle-ms+[capture after output silence in milliseconds]:milliseconds:' \
+    '-font-size+[SVG font size in pixels]:pixels:' \
+    '-font-family+[SVG CSS font-family]:family:' \
+    '-cell-width+[SVG terminal cell width in pixels]:pixels:' \
+    '-cell-height+[SVG terminal cell height in pixels]:pixels:' \
+    '-padding+[SVG padding in pixels]:pixels:' \
+    '-theme+[SVG theme]:theme:(auto dark light)' \
+    '-minify[write SVG without optional whitespace]' \
+    '-query-terminal+[query current terminal colors before recording]:bool:(true false)' \
+    '-clear+[clear terminal before recording starts]:bool:(true false)' \
+    '-q[suppress progress and summary]' \
+    '(-h -help)'{-h,-help}'[show help]' \
+    '--[stop option parsing]' \
+    '*::command:_normal'
+}
+
+_ttysvg "$@"

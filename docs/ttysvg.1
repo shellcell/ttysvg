@@ -1,0 +1,114 @@
+.Dd June 24, 2026
+.Dt TTYSVG 1
+.Os
+.Sh NAME
+.Nm ttysvg
+.Nd record terminal sessions as animated SVG
+.Sh SYNOPSIS
+.Nm
+.Op Fl q
+.Op Fl clear Ns = Ns Ar bool
+.Op Fl query-terminal Ns = Ns Ar bool
+.Op Fl minify
+.Op Fl o Ar path
+.Op Fl size Ar COLSxROWS
+.Op Fl frame-ms Ar milliseconds
+.Op Fl idle-ms Ar milliseconds
+.Op Fl font-size Ar pixels
+.Op Fl font-family Ar family
+.Op Fl cell-width Ar pixels
+.Op Fl cell-height Ar pixels
+.Op Fl padding Ar pixels
+.Op Fl theme Ar name
+.Op Fl -
+.Op Ar command Op Ar arg ...
+.Sh DESCRIPTION
+.Nm
+records an interactive terminal session in a child PTY and converts the captured
+terminal output to an animated SVG after the recorded command exits.
+.Pp
+With no command,
+.Nm
+starts the user's shell in the recorder PTY.
+Type
+.Ql exit
+or otherwise end the shell to finish recording and write the SVG.
+.Pp
+If a command is supplied after
+.Fl - ,
+.Nm
+records that command instead.
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl o Ar path
+Write the SVG to
+.Ar path .
+The path may be a file or a directory.
+If it is a directory, the output file is
+named
+.Pa ttysvg.svg .
+The default is the current directory.
+.It Fl size Ar COLSxROWS
+Use a fixed PTY size, for example
+.Ql 120x40 .
+The default is the current terminal size, or 80x24 when the size cannot be
+detected.
+.It Fl frame-ms Ar milliseconds
+Minimum time between sampled SVG frames.
+The default is 80.
+.It Fl idle-ms Ar milliseconds
+Capture a frame after this much output silence.
+The default is 60.
+.It Fl font-size Ar pixels
+SVG font size in pixels.
+The default is the detected terminal font size, or 14.
+.It Fl font-family Ar family
+CSS font-family used by the SVG.
+The default is the detected terminal font plus
+common Nerd Font fallbacks.
+.It Fl cell-width Ar pixels
+SVG terminal cell width in pixels.
+The default is derived from the font size.
+.It Fl cell-height Ar pixels
+SVG terminal cell height in pixels.
+The default is derived from the font size.
+.It Fl padding Ar pixels
+SVG padding in pixels.
+The default is 12.
+.It Fl theme Ar name
+SVG theme.
+Supported values are
+.Cm auto ,
+.Cm dark ,
+and
+.Cm light .
+The default is
+.Cm auto .
+.It Fl minify
+Write SVG without optional whitespace.
+.It Fl query-terminal Ns = Ns Ar bool
+Query the current terminal for colors before recording.
+The default is true.
+.It Fl clear Ns = Ns Ar bool
+Clear the terminal before recording starts.
+The default is true.
+.It Fl q
+Suppress progress and summary output.
+.El
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa completions/ttysvg.bash
+Bash completion script.
+.It Pa completions/ttysvg.fish
+Fish completion script.
+.It Pa completions/_ttysvg
+Zsh completion script.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+.Bd -literal -offset indent
+ttysvg -o demo.svg
+ttysvg -o demo.svg -- vim
+ttysvg -size 100x30 -theme dark -o demo.svg -- go test ./...
+.Ed
