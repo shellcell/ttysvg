@@ -13,6 +13,8 @@ import (
 	"github.com/rabarbra/ttysvg/internal/app"
 )
 
+var version = "0.0.2"
+
 func main() {
 	code, err := run(os.Args[1:])
 	if err != nil {
@@ -31,6 +33,7 @@ func run(args []string) (int, error) {
 	var cellWidth float64
 	var cellHeight float64
 	var padding float64
+	var showVersion bool
 
 	flags := flag.NewFlagSet("ttysvg", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -48,6 +51,7 @@ func run(args []string) (int, error) {
 	flags.BoolVar(&cfg.QueryTerminal, "query-terminal", true, "query current terminal colors before recording")
 	flags.BoolVar(&cfg.ClearTerminal, "clear", true, "clear the terminal before recording starts")
 	flags.BoolVar(&cfg.Quiet, "q", false, "do not print recording summary")
+	flags.BoolVar(&showVersion, "version", false, "print version and exit")
 	flags.Usage = func() {
 		fmt.Fprintf(flags.Output(), "Usage: ttysvg [flags] [--] [command [args...]]\n\n")
 		fmt.Fprintf(flags.Output(), "With no command, ttysvg starts your shell in a recorder PTY. Type exit to stop recording.\n\n")
@@ -59,6 +63,10 @@ func run(args []string) (int, error) {
 			return 0, nil
 		}
 		return 2, err
+	}
+	if showVersion {
+		fmt.Fprintf(os.Stdout, "ttysvg %s\n", version)
+		return 0, nil
 	}
 
 	cols, rows, err := parseSize(size)

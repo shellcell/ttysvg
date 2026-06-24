@@ -3,7 +3,7 @@ CMD := ./cmd/ttysvg
 DIST := dist
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || printf dev)
 GOARM ?= 7
-LDFLAGS := -s -w
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
 MANPAGE := docs/ttysvg.1
 COMPLETIONS := completions/ttysvg.bash completions/ttysvg.fish completions/_ttysvg

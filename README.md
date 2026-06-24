@@ -46,6 +46,7 @@ ttysvg -o demo.svg -- go test ./...
 -minify         write SVG without optional whitespace
 -query-terminal query current terminal colors before recording; default true
 -clear          clear the terminal before recording starts; default true
+-version        print version and exit
 -q              suppress progress and summary
 ```
 
