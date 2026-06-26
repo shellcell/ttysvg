@@ -39,10 +39,14 @@ ttysvg -o demo.svg -- go test ./...
 ```text
 -o path          output SVG file or directory
 -size COLSxROWS fixed PTY size; defaults to current terminal size or 80x24
+-cols n          terminal width in columns; overrides -size and detected width
+-rows n          terminal height in rows; overrides -size and detected height
 -frame-ms n     minimum time between SVG snapshots; default 80
 -idle-ms n      capture after output silence; default 60
 -font-family s  SVG CSS font-family; defaults to detected terminal font plus fallbacks
 -theme name     auto, dark, or light; default auto
+-bg color       terminal background color during recording, e.g. #0d1117; also used as SVG background
+-padding px     SVG background frame around the terminal grid; default 0
 -minify         write SVG without optional whitespace
 -query-terminal query current terminal colors before recording; default true
 -clear          clear the terminal before recording starts; default true
@@ -50,9 +54,13 @@ ttysvg -o demo.svg -- go test ./...
 -q              suppress progress and summary
 ```
 
+When `-size`, `-cols`, or `-rows` is set, `ttysvg` compares the requested recording size with the current terminal. If it is the same size, recording runs directly in the terminal as usual. If it is larger, recording does not start and `ttysvg` asks you to resize the terminal first. If it is smaller, `ttysvg` starts the child session in a visible pane so you can prepare before recording. Use the pane buttons or keyboard shortcuts: `Ctrl-R` starts/resumes, `Ctrl-P` pauses/resumes, and `Ctrl-Q` stops. The prepared screen and each resume screen are captured as static SVG frames, then later output animates from those states. Paused output is live and interactive but is not recorded.
+
+When pane mode is active, `-padding` is also previewed inside the pane border using whole terminal cells, approximated from the configured SVG cell size.
+
 ## Performance Model
 
-Recording avoids terminal emulation and SVG work while the TUI is running. The hot path does only this:
+In direct mode, recording avoids terminal emulation and SVG work while the TUI is running. The hot path does only this:
 
 ```text
 PTY read -> stdout write -> buffered event-log write
@@ -65,6 +73,8 @@ event log -> ANSI terminal replay -> sampled frames -> streaming row-diff SVG
 ```
 
 The SVG renderer does not keep all snapshots in RAM. It keeps the current terminal grid and active row states, then emits a row interval when that row changes. This keeps memory roughly proportional to terminal size rather than recording length.
+
+Pane mode is heavier because it live-renders the child PTY through ttysvg's terminal emulator so the fixed-size pane, controls, pause/resume, and mouse translation remain visible. Memory is still bounded by terminal size, but CPU cost is higher than direct mode.
 
 ## SVG Compatibility
 

@@ -23,9 +23,11 @@ type Config struct {
 	Command       []string
 	Cols          int
 	Rows          int
+	FixedSize     bool
 	FrameInterval time.Duration
 	IdleInterval  time.Duration
 	Theme         string
+	Background    string
 	FontSize      float64
 	FontFamily    string
 	Colors        svg.Colors
@@ -59,9 +61,18 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 			}
 		}
 	}
-	if cfg.ClearTerminal {
+	if err := cfg.applyBackgroundOverride(); err != nil {
+		return 2, err
+	}
+	liveTerminal, err := setupLiveTerminal(os.Stdout, cfg)
+	if err != nil {
+		return 2, err
+	}
+	if cfg.ClearTerminal && !liveTerminal.Decorated() {
 		clearInteractiveTerminal(os.Stdout)
 	}
+	liveTerminal.Activate()
+	defer liveTerminal.Restore()
 
 	logFile, err := os.CreateTemp("", "ttysvg-*.ttylog")
 	if err != nil {
@@ -71,20 +82,42 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 	defer os.Remove(logPath)
 
 	writer := eventlog.NewWriter(logFile)
-	if !cfg.Quiet && !cfg.ClearTerminal {
+	if !cfg.Quiet && !cfg.ClearTerminal && !liveTerminal.Decorated() {
 		fmt.Fprintf(os.Stderr, "ttysvg: recording to %s; type exit to stop\n", cfg.OutputPath)
+	}
+	runCtx := ctx
+	var cancel context.CancelFunc
+	var control *recordingControl
+	sink := ptyrec.Sink(writer)
+	var input io.Reader
+	if liveTerminal.Decorated() {
+		runCtx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		control = newRecordingControl(writer, liveTerminal, cancel)
+		defer control.Close()
+		sink = control
+		input = newPaneInputReader(os.Stdin, liveTerminal, control)
 	}
 	recorder := ptyrec.Recorder{
 		Command: cfg.Command,
 		Cols:    cfg.Cols,
 		Rows:    cfg.Rows,
-		Stdout:  os.Stdout,
+		Stdout:  liveTerminal.Writer(),
 		Stdin:   os.Stdin,
+		Input:   input,
 		Stderr:  os.Stderr,
 	}
 
 	recordStart := time.Now()
-	exitCode, recordErr := recorder.Run(ctx, writer)
+	exitCode, recordErr := recorder.Run(runCtx, sink)
+	liveTerminal.Restore()
+	if control != nil && control.StopRequested() && recordErr != nil {
+		recordErr = nil
+		exitCode = 0
+	}
+	if control != nil && control.Err() != nil && recordErr == nil {
+		recordErr = control.Err()
+	}
 	if err := writer.Close(); err != nil && recordErr == nil {
 		recordErr = fmt.Errorf("close event log: %w", err)
 	}
@@ -93,6 +126,12 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 	}
 	if recordErr != nil {
 		return exitCodeOrOne(exitCode), recordErr
+	}
+	if control != nil && !control.Started() {
+		if !cfg.Quiet {
+			fmt.Fprintf(os.Stderr, "ttysvg: recording was not started; no SVG written\n")
+		}
+		return exitCode, nil
 	}
 
 	stats, err := render(ctx, cfg, logPath)
@@ -167,6 +206,18 @@ func (cfg *Config) setDefaults() error {
 	if cfg.Theme != "dark" && cfg.Theme != "light" {
 		return fmt.Errorf("unsupported theme %q", cfg.Theme)
 	}
+	return nil
+}
+
+func (cfg *Config) applyBackgroundOverride() error {
+	if cfg.Background == "" {
+		return nil
+	}
+	bg := parseHexColor(cfg.Background)
+	if bg == "" {
+		return fmt.Errorf("invalid -bg %q, expected #RRGGBB", cfg.Background)
+	}
+	cfg.Colors.Background = bg
 	return nil
 }
 
@@ -299,6 +350,12 @@ func replay(ctx context.Context, reader *eventlog.Reader, screen *terminal.Scree
 		}
 		if err != nil {
 			return renderStats{}, fmt.Errorf("read event log: %w", err)
+		}
+
+		if dirty && lastEventAt == 0 && lastSnapshotAt == 0 && record.At > 0 {
+			if err := capture(0); err != nil {
+				return renderStats{}, err
+			}
 		}
 
 		if dirty && idleInterval > 0 && record.At-lastEventAt >= idleInterval {

@@ -26,6 +26,8 @@ func main() {
 func run(args []string) (int, error) {
 	var cfg app.Config
 	var size string
+	var colsFlag int
+	var rowsFlag int
 	var frameMS int
 	var idleMS int
 	var fontSize float64
@@ -39,14 +41,17 @@ func run(args []string) (int, error) {
 	flags.SetOutput(os.Stderr)
 	flags.StringVar(&cfg.OutputPath, "o", ".", "output SVG file or directory")
 	flags.StringVar(&size, "size", "", "terminal size as COLSxROWS; defaults to current terminal or 80x24")
+	flags.IntVar(&colsFlag, "cols", 0, "terminal width in columns; overrides -size and the detected width")
+	flags.IntVar(&rowsFlag, "rows", 0, "terminal height in rows; overrides -size and the detected height")
 	flags.IntVar(&frameMS, "frame-ms", 80, "minimum time between captured SVG frames")
 	flags.IntVar(&idleMS, "idle-ms", 60, "capture a frame after this much output silence")
 	flags.Float64Var(&fontSize, "font-size", 0, "SVG font size in px; defaults to terminal font size or 14")
 	flags.StringVar(&fontFamily, "font-family", "", "SVG CSS font-family; defaults to terminal font plus Nerd Font fallbacks")
 	flags.Float64Var(&cellWidth, "cell-width", 0, "SVG terminal cell width in px; defaults to font-size*0.62")
 	flags.Float64Var(&cellHeight, "cell-height", 0, "SVG terminal cell height in px; defaults to font-size*1.25")
-	flags.Float64Var(&padding, "padding", 12, "SVG padding in px")
+	flags.Float64Var(&padding, "padding", 0, "SVG padding in px")
 	flags.StringVar(&cfg.Theme, "theme", "auto", "SVG theme: auto, dark, or light")
+	flags.StringVar(&cfg.Background, "bg", "", "terminal background color during recording, e.g. #0d1117; also used as SVG background")
 	flags.BoolVar(&cfg.Minify, "minify", false, "write SVG without optional whitespace")
 	flags.BoolVar(&cfg.QueryTerminal, "query-terminal", true, "query current terminal colors before recording")
 	flags.BoolVar(&cfg.ClearTerminal, "clear", true, "clear the terminal before recording starts")
@@ -68,15 +73,28 @@ func run(args []string) (int, error) {
 		fmt.Fprintf(os.Stdout, "ttysvg %s\n", version)
 		return 0, nil
 	}
+	if colsFlag < 0 {
+		return 2, fmt.Errorf("-cols must be positive")
+	}
+	if rowsFlag < 0 {
+		return 2, fmt.Errorf("-rows must be positive")
+	}
 
 	cols, rows, err := parseSize(size)
 	if err != nil {
 		return 2, err
 	}
+	if colsFlag > 0 {
+		cols = colsFlag
+	}
+	if rowsFlag > 0 {
+		rows = rowsFlag
+	}
 
 	cfg.Command = flags.Args()
 	cfg.Cols = cols
 	cfg.Rows = rows
+	cfg.FixedSize = size != "" || colsFlag > 0 || rowsFlag > 0
 	cfg.FrameInterval = time.Duration(frameMS) * time.Millisecond
 	cfg.IdleInterval = time.Duration(idleMS) * time.Millisecond
 	cfg.FontSize = fontSize
