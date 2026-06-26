@@ -46,10 +46,10 @@ func TestRendererPositionsRunsAfterSpaces(t *testing.T) {
 	if strings.Contains(out, ">A   B</text>") {
 		t.Fatalf("renderer emitted spaced cells as one text run:\n%s", out)
 	}
-	if !strings.Contains(out, `<text x="0.00" y="10.00" fill="#c9d1d9">A</text>`) {
+	if !strings.Contains(out, `<text x="0" y="10" class="fg">A</text>`) {
 		t.Fatalf("missing A at cell 0:\n%s", out)
 	}
-	if !strings.Contains(out, `<text x="40.00" y="10.00" fill="#c9d1d9">B</text>`) {
+	if !strings.Contains(out, `<text x="40" y="10" class="fg">B</text>`) {
 		t.Fatalf("missing B at cell 4:\n%s", out)
 	}
 }
@@ -86,7 +86,7 @@ func TestRendererPinsEveryCellInTextRun(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, `<text x="0.00 10.00 20.00" y="10.00" fill="#c9d1d9">╭─╮</text>`) {
+	if !strings.Contains(out, `<text x="0 10 20" y="10" class="fg">╭─╮</text>`) {
 		t.Fatalf("text run was not pinned to every cell:\n%s", out)
 	}
 }
@@ -127,10 +127,10 @@ func TestRendererEmitsCursor(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, `<rect x="0.00" y="0.00" width="10.00" height="12.00" fill="#c9d1d9"/>`) {
+	if !strings.Contains(out, `<rect x="0" y="0" width="10" height="12" class="fg"/>`) {
 		t.Fatalf("missing cursor rectangle:\n%s", out)
 	}
-	if !strings.Contains(out, `<text x="0.00" y="10.00" fill="#0d1117">A</text>`) {
+	if !strings.Contains(out, `<text x="0" y="10" class="bg">A</text>`) {
 		t.Fatalf("missing cursor text overlay:\n%s", out)
 	}
 }
@@ -155,10 +155,10 @@ func TestRendererFinalBlankRowCoversPreviousText(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, `<set attributeName="visibility" to="visible" begin="1.000s" fill="freeze"/>`) {
+	if !strings.Contains(out, `<set attributeName="visibility" to="visible" begin="1s" fill="freeze"/>`) {
 		t.Fatalf("missing final blank row group:\n%s", out)
 	}
-	if !strings.Contains(out, `<rect x="0.00" y="0.00" width="30.00" height="12.00" fill="#0d1117"/>`) {
+	if !strings.Contains(out, `<rect x="0" y="0" width="30" height="12" class="bg"/>`) {
 		t.Fatalf("missing final row background cover:\n%s", out)
 	}
 }
@@ -187,8 +187,8 @@ func TestRendererEmitsNonFinalBlankRows(t *testing.T) {
 	}
 
 	out := buf.String()
-	blankGroup := `<set attributeName="visibility" to="visible" begin="1.000s" dur="1.000s"/>`
-	rowClear := `<rect x="0.00" y="0.00" width="40.00" height="12.00" fill="#0d1117"/>`
+	blankGroup := `<set attributeName="visibility" to="visible" begin="1s" dur="1s"/>`
+	rowClear := `<rect x="0" y="0" width="40" height="12" class="bg"/>`
 	if !strings.Contains(out, blankGroup) {
 		t.Fatalf("missing non-final blank row interval:\n%s", out)
 	}
@@ -221,11 +221,11 @@ func TestRendererClearsRowBeforeInverseHighlight(t *testing.T) {
 	}
 
 	out := buf.String()
-	rowClear := `<rect x="0.00" y="0.00" width="20.00" height="12.00" fill="#0d1117"/>`
+	rowClear := `<rect x="0" y="0" width="20" height="12" class="bg"/>`
 	if strings.Count(out, rowClear) < 3 {
 		t.Fatalf("expected every emitted row to clear first; found %d clears:\n%s", strings.Count(out, rowClear), out)
 	}
-	if !strings.Contains(out, `<rect x="10.00" y="0.00" width="10.00" height="12.00" fill="#c9d1d9"/>`) {
+	if !strings.Contains(out, `<rect x="10" y="0" width="10" height="12" class="fg"/>`) {
 		t.Fatalf("missing moved inverse highlight:\n%s", out)
 	}
 }
@@ -254,7 +254,7 @@ func TestRendererEmitsCombiningAndSkipsWideContinuation(t *testing.T) {
 	if !strings.Contains(out, "e\u0301你") {
 		t.Fatalf("missing combining text:\n%s", out)
 	}
-	if strings.Contains(out, `<text x="10.00 20.00"`) {
+	if strings.Contains(out, `<text x="10 20"`) {
 		t.Fatalf("wide continuation received its own x position:\n%s", out)
 	}
 }

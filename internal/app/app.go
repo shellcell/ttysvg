@@ -174,10 +174,10 @@ func (cfg *Config) setDefaults() error {
 		return errors.New("terminal size must be positive")
 	}
 	if cfg.FrameInterval <= 0 {
-		return errors.New("-frame-ms must be positive")
+		return errors.New("-frame must be positive")
 	}
 	if cfg.IdleInterval < 0 {
-		return errors.New("-idle-ms cannot be negative")
+		return errors.New("-idle cannot be negative")
 	}
 	if cfg.FontFamily == "" && detected.FontFamily != "" {
 		cfg.FontFamily = cssFontFamilyWithFallback(detected.FontFamily)

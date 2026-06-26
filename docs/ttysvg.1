@@ -7,14 +7,14 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl q
-.Op Fl clear Ns = Ns Ar bool
-.Op Fl query-terminal Ns = Ns Ar bool
+.Op Fl no-clear
+.Op Fl no-query-terminal
 .Op Fl minify
 .Op Fl version
 .Op Fl o Ar path
 .Op Fl size Ar COLSxROWS
-.Op Fl frame-ms Ar milliseconds
-.Op Fl idle-ms Ar milliseconds
+.Op Fl frame Ar duration
+.Op Fl idle Ar duration
 .Op Fl font-size Ar pixels
 .Op Fl font-family Ar family
 .Op Fl cell-width Ar pixels
@@ -52,14 +52,24 @@ The default is the current directory.
 .It Fl size Ar COLSxROWS
 Use a fixed PTY size, for example
 .Ql 120x40 .
+Either side may be omitted to auto-fit the current terminal in that dimension,
+for example
+.Ql 100x
+(width only) or
+.Ql x30
+(height only).
 The default is the current terminal size, or 80x24 when the size cannot be
 detected.
-.It Fl frame-ms Ar milliseconds
-Minimum time between sampled SVG frames.
-The default is 80.
-.It Fl idle-ms Ar milliseconds
-Capture a frame after this much output silence.
-The default is 60.
+.It Fl frame Ar duration
+Minimum time between sampled SVG frames, as a Go duration such as
+.Ql 80ms .
+The default is 80ms.
+.It Fl idle Ar duration
+Capture a frame after this much output silence, as a Go duration.
+A value of
+.Ql 0
+disables idle capture.
+The default is 60ms.
 .It Fl font-size Ar pixels
 SVG font size in pixels.
 The default is the detected terminal font size, or 14.
@@ -75,7 +85,7 @@ SVG terminal cell height in pixels.
 The default is derived from the font size.
 .It Fl padding Ar pixels
 SVG padding in pixels.
-The default is 12.
+The default is 0.
 .It Fl theme Ar name
 SVG theme.
 Supported values are
@@ -87,12 +97,12 @@ The default is
 .Cm auto .
 .It Fl minify
 Write SVG without optional whitespace.
-.It Fl query-terminal Ns = Ns Ar bool
-Query the current terminal for colors before recording.
-The default is true.
-.It Fl clear Ns = Ns Ar bool
-Clear the terminal before recording starts.
-The default is true.
+.It Fl no-query-terminal
+Do not query the current terminal for colors before recording.
+Querying is on by default.
+.It Fl no-clear
+Do not clear the terminal before recording starts.
+Clearing is on by default.
 .It Fl version
 Print the version and exit.
 .It Fl q
@@ -113,5 +123,6 @@ Zsh completion script.
 .Bd -literal -offset indent
 ttysvg -o demo.svg
 ttysvg -o demo.svg -- vim
-ttysvg -size 100x30 -theme dark -o demo.svg -- go test ./...
+ttysvg -size 100x30 -frame 80ms -theme dark -o demo.svg -- go test ./...
+ttysvg -size x30 -no-clear -o demo.svg
 .Ed

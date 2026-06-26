@@ -27,6 +27,9 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Run benchmarks
+        run: make bench
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -63,6 +66,19 @@ jobs:
             printf '```\n'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Run benchmarks
+        run: |
+          mkdir -p dist
+          go test -run='^$' -bench=. -benchmem -benchtime=200ms ./... \
+            | grep -E '^(Benchmark|ok|goos|goarch|pkg|cpu)' \
+            | tee dist/BENCHMARKS.txt
+          {
+            printf '## Benchmarks\n\n'
+            printf '```text\n'
+            cat dist/BENCHMARKS.txt
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,8 +88,12 @@ jobs:
             printf '```text\n'
             cat dist/SIZES.txt
             printf '```\n'
+            printf '\nBenchmarks:\n\n'
+            printf '```text\n'
+            cat dist/BENCHMARKS.txt
+            printf '```\n'
           } > dist/release-notes.md
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --notes-file dist/release-notes.md \
-            dist/*.tar.gz dist/checksums.txt dist/SIZES.txt
+            dist/*.tar.gz dist/checksums.txt dist/SIZES.txt dist/BENCHMARKS.txt

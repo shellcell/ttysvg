@@ -16,12 +16,20 @@ RELEASE_TARGETS := \
 	macos_x86_64 \
 	macos_arm64
 
-.PHONY: test tests mandoc release build-release checksums size-report clean $(RELEASE_TARGETS)
+.PHONY: test tests bench mandoc release build-release checksums size-report clean $(RELEASE_TARGETS)
 
 .NOTPARALLEL: release
 
 test tests:
 	go test ./...
+
+# Compile and run every benchmark once (-benchtime=1x) so CI exercises the
+# performance/RAM hot paths and fails on a broken benchmark, without gating on
+# wall-clock numbers that vary by runner. Use `make bench BENCHTIME=2s` locally
+# for real measurements.
+BENCHTIME ?= 1x
+bench:
+	go test -run='^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) ./...
 
 mandoc:
 	@command -v mandoc >/dev/null 2>&1 || { printf 'mandoc is required to validate %s\n' "$(MANPAGE)"; exit 1; }
