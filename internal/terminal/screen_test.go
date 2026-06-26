@@ -116,6 +116,18 @@ func TestHorizontalTabStop(t *testing.T) {
 	}
 }
 
+func TestBlankWriteMarksVisibleCursorDirty(t *testing.T) {
+	s := NewScreen(4, 1)
+	if !s.Write([]byte(" ")) {
+		t.Fatal("writing a blank over a blank cell should be dirty because the visible cursor moves")
+	}
+	frame := s.Snapshot()
+	defer frame.Release()
+	if frame.CursorX != 1 || frame.CursorY != 0 {
+		t.Fatalf("cursor = %d,%d, want 1,0", frame.CursorX, frame.CursorY)
+	}
+}
+
 func TestSoftResetResetsStyle(t *testing.T) {
 	s := NewScreen(4, 1)
 	s.Write([]byte("\x1b[31mR\x1b[2G\x1b[!p\x1b[2GX"))

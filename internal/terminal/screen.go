@@ -462,6 +462,9 @@ func (s *Screen) putCellWidth(cell Cell, width int) bool {
 	if width < 1 {
 		width = 1
 	}
+	oldX := s.active.x
+	oldY := s.active.y
+	oldWrap := s.active.wrap
 	if s.active.wrap {
 		s.active.x = 0
 		s.lineFeed()
@@ -504,11 +507,11 @@ func (s *Screen) putCellWidth(cell Cell, width int) bool {
 	if s.active.x >= s.cols {
 		s.active.x = s.cols - 1
 		if !s.autoWrap {
-			return dirty
+			return dirty || (s.cursorVisible && (oldX != s.active.x || oldY != s.active.y || oldWrap != s.active.wrap))
 		}
 		s.active.wrap = true
 	}
-	return dirty
+	return dirty || (s.cursorVisible && (oldX != s.active.x || oldY != s.active.y || oldWrap != s.active.wrap))
 }
 
 func (s *Screen) addCombining(r rune) bool {

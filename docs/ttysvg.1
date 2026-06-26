@@ -8,7 +8,7 @@
 .Nm
 .Op Fl q
 .Op Fl no-clear
-.Op Fl no-query-terminal
+.Op Fl query-terminal
 .Op Fl version
 .Op Fl o Ar path
 .Op Fl size Ar COLSxROWS
@@ -70,8 +70,11 @@ A value of
 disables idle capture.
 The default is 60ms.
 .It Fl font-size Ar pixels
-SVG font size in pixels.
-The default is the detected terminal font size, or 14.
+SVG output font size in pixels.
+This does not change the live terminal font during recording.
+The default is the detected terminal font size when
+.Fl query-terminal
+is enabled, otherwise 14.
 .It Fl font-family Ar family
 CSS font-family used by the SVG.
 The default is the detected terminal font plus
@@ -94,9 +97,10 @@ and
 .Cm light .
 The default is
 .Cm auto .
-.It Fl no-query-terminal
-Do not query the current terminal for colors before recording.
-Querying is on by default.
+.It Fl query-terminal
+Query and identify the current terminal for colors, theme, and font before
+recording.
+This is off by default to minimize startup latency.
 .It Fl no-clear
 Do not clear the terminal before recording starts.
 Clearing is on by default.
