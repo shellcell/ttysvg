@@ -24,6 +24,7 @@ type Recorder struct {
 	Cols    int
 	Rows    int
 	Stdin   *os.File
+	Input   io.Reader
 	Stdout  io.Writer
 	Stderr  io.Writer
 }
@@ -49,9 +50,13 @@ func (r Recorder) Run(ctx context.Context, sink Sink) (int, error) {
 	}
 	defer ptmx.Close()
 
-	if r.Stdin != nil {
+	input := r.Input
+	if input == nil {
+		input = r.Stdin
+	}
+	if input != nil {
 		go func() {
-			_, _ = io.Copy(ptmx, r.Stdin)
+			_, _ = io.Copy(ptmx, input)
 		}()
 	}
 

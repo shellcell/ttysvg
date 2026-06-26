@@ -32,10 +32,95 @@ type Colors struct {
 
 const DefaultFontFamily = "'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'MesloLGS NF', 'Hack Nerd Font Mono', 'FiraCode Nerd Font Mono', 'CaskaydiaCove Nerd Font Mono', 'Symbols Nerd Font Mono', 'Symbols Nerd Font', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace"
 
+func DefaultColors(theme string) Colors {
+	pal := NewPalette(theme, Colors{})
+	return Colors{Background: pal.background, Foreground: pal.foreground, ANSI: pal.ansi}
+}
+
+type ResolvedStyle struct {
+	Fg string
+	Bg string
+}
+
+type Palette struct {
+	background string
+	foreground string
+	ansi       [16]string
+}
+
+func NewPalette(theme string, colors Colors) Palette {
+	pal := darkPalette()
+	if theme == "light" {
+		pal = lightPalette()
+	}
+	return pal.withColors(colors)
+}
+
+func (p Palette) Background() string {
+	return p.background
+}
+
+func (p Palette) Foreground() string {
+	return p.foreground
+}
+
+func (p Palette) Indexed(index uint8) string {
+	if index < 16 {
+		return p.ansi[index]
+	}
+	if index >= 232 {
+		gray := uint8(8 + int(index-232)*10)
+		return RGB(gray, gray, gray)
+	}
+	i := int(index - 16)
+	levels := [6]uint8{0, 95, 135, 175, 215, 255}
+	return RGB(levels[i/36], levels[(i/6)%6], levels[i%6])
+}
+
+func (p Palette) ResolveColor(color terminal.Color, foreground bool) string {
+	switch color.Mode {
+	case terminal.ColorIndexed:
+		return p.Indexed(color.Index)
+	case terminal.ColorRGB:
+		return RGB(color.R, color.G, color.B)
+	default:
+		if foreground {
+			return p.foreground
+		}
+		return p.background
+	}
+}
+
+func (p Palette) ResolveStyle(style terminal.Style) ResolvedStyle {
+	fg := style.Fg
+	if style.Bold && fg.Mode == terminal.ColorIndexed && fg.Index < 8 {
+		fg.Index += 8
+	}
+	fgHex := p.ResolveColor(fg, true)
+	bgHex := p.ResolveColor(style.Bg, false)
+	if style.Inverse {
+		fgHex, bgHex = bgHex, fgHex
+	}
+	if style.Hidden {
+		fgHex = bgHex
+	}
+	return ResolvedStyle{Fg: fgHex, Bg: bgHex}
+}
+
+func HexToRGB(color string) (uint8, uint8, uint8, bool) {
+	if len(color) != 7 || color[0] != '#' {
+		return 0, 0, 0, false
+	}
+	r, okR := hexByte(color[1:3])
+	g, okG := hexByte(color[3:5])
+	b, okB := hexByte(color[5:7])
+	return r, g, b, okR && okG && okB
+}
+
 type Renderer struct {
 	w          io.Writer
 	cfg        Config
-	palette    palette
+	palette    Palette
 	activeRows []terminal.Cell
 	rowStart   []time.Duration
 	cursorX    int
@@ -56,14 +141,10 @@ func NewRenderer(w io.Writer, cfg Config) *Renderer {
 	if cfg.FontFamily == "" {
 		cfg.FontFamily = DefaultFontFamily
 	}
-	pal := darkPalette()
-	if cfg.Theme == "light" {
-		pal = lightPalette()
-	}
-	return newRenderer(w, cfg, pal.withColors(cfg.Colors))
+	return newRenderer(w, cfg, NewPalette(cfg.Theme, cfg.Colors))
 }
 
-func newRenderer(w io.Writer, cfg Config, pal palette) *Renderer {
+func newRenderer(w io.Writer, cfg Config, pal Palette) *Renderer {
 	active := make([]terminal.Cell, cfg.Cols*cfg.Rows)
 	for i := range active {
 		active[i] = terminal.BlankCell()
@@ -361,33 +442,8 @@ func appendDecoration(current, next string) string {
 }
 
 func (r *Renderer) colors(style terminal.Style) (string, string) {
-	fg := style.Fg
-	if style.Bold && fg.Mode == terminal.ColorIndexed && fg.Index < 8 {
-		fg.Index += 8
-	}
-	fgHex := r.resolveColor(fg, true)
-	bgHex := r.resolveColor(style.Bg, false)
-	if style.Inverse {
-		fgHex, bgHex = bgHex, fgHex
-	}
-	if style.Hidden {
-		fgHex = bgHex
-	}
-	return fgHex, bgHex
-}
-
-func (r *Renderer) resolveColor(color terminal.Color, foreground bool) string {
-	switch color.Mode {
-	case terminal.ColorIndexed:
-		return r.palette.indexed(color.Index)
-	case terminal.ColorRGB:
-		return rgb(color.R, color.G, color.B)
-	default:
-		if foreground {
-			return r.palette.foreground
-		}
-		return r.palette.background
-	}
+	resolved := r.palette.ResolveStyle(style)
+	return resolved.Fg, resolved.Bg
 }
 
 func cellsEqual(a, b []terminal.Cell) bool {
@@ -461,13 +517,7 @@ func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', 2, 64)
 }
 
-type palette struct {
-	background string
-	foreground string
-	ansi       [16]string
-}
-
-func (p palette) withColors(colors Colors) palette {
+func (p Palette) withColors(colors Colors) Palette {
 	if colors.Background != "" {
 		p.background = colors.Background
 	}
@@ -482,8 +532,8 @@ func (p palette) withColors(colors Colors) palette {
 	return p
 }
 
-func darkPalette() palette {
-	return palette{
+func darkPalette() Palette {
+	return Palette{
 		background: "#0d1117",
 		foreground: "#c9d1d9",
 		ansi: [16]string{
@@ -493,8 +543,8 @@ func darkPalette() palette {
 	}
 }
 
-func lightPalette() palette {
-	return palette{
+func lightPalette() Palette {
+	return Palette{
 		background: "#ffffff",
 		foreground: "#24292f",
 		ansi: [16]string{
@@ -504,17 +554,8 @@ func lightPalette() palette {
 	}
 }
 
-func (p palette) indexed(index uint8) string {
-	if index < 16 {
-		return p.ansi[index]
-	}
-	if index >= 232 {
-		gray := uint8(8 + int(index-232)*10)
-		return rgb(gray, gray, gray)
-	}
-	i := int(index - 16)
-	levels := [6]uint8{0, 95, 135, 175, 215, 255}
-	return rgb(levels[i/36], levels[(i/6)%6], levels[i%6])
+func RGB(r, g, b uint8) string {
+	return rgb(r, g, b)
 }
 
 func rgb(r, g, b uint8) string {
@@ -527,4 +568,25 @@ func rgb(r, g, b uint8) string {
 	out[5] = hex[b>>4]
 	out[6] = hex[b&0x0f]
 	return string(out)
+}
+
+func hexByte(value string) (uint8, bool) {
+	if len(value) != 2 {
+		return 0, false
+	}
+	var out uint8
+	for _, r := range value {
+		out <<= 4
+		switch {
+		case r >= '0' && r <= '9':
+			out += uint8(r - '0')
+		case r >= 'a' && r <= 'f':
+			out += uint8(r-'a') + 10
+		case r >= 'A' && r <= 'F':
+			out += uint8(r-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return out, true
 }
