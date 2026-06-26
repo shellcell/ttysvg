@@ -1,13 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	termemu "github.com/rabarbra/ttysvg/internal/terminal"
@@ -227,6 +228,8 @@ type paneWriter struct {
 	styleIn     termemu.Style
 	styleOut    liveStyle
 	styleCached bool
+	buf         bytes.Buffer // reused across repaints to avoid a per-render allocation
+	appCursor   atomic.Bool  // mirrors the emulator's DECCKM for the input goroutine
 	dirty       bool
 	pending     bool
 	closed      bool
@@ -247,7 +250,7 @@ func (p *paneWriter) resolveStyle(in termemu.Style) liveStyle {
 // writeStyledCells emits a row of cells with minimal SGR transitions. Callers
 // are responsible for writing the cursor-position prefix; this handles styling
 // and the trailing reset only.
-func (p *paneWriter) writeStyledCells(b *strings.Builder, cells []termemu.Cell) {
+func (p *paneWriter) writeStyledCells(b *bytes.Buffer, cells []termemu.Cell) {
 	var prev liveStyle
 	prevSet := false
 	for i := range cells {
@@ -308,10 +311,20 @@ func (p *paneWriter) Write(data []byte) (int, error) {
 	if p.screen.Write(data) {
 		p.dirty = true
 	}
+	// Publish the cursor-key mode so the input goroutine can translate arrows.
+	p.appCursor.Store(p.screen.ApplicationCursorKeys())
 	if err := p.scheduleRenderLocked(); err != nil {
 		return 0, err
 	}
 	return len(data), nil
+}
+
+// applicationCursorKeys reports whether the child currently has DECCKM enabled.
+func (t *liveTerminal) applicationCursorKeys() bool {
+	if pw, ok := t.writer.(*paneWriter); ok {
+		return pw.appCursor.Load()
+	}
+	return false
 }
 
 // scheduleRenderLocked coalesces repaints: it repaints immediately if at least
@@ -351,15 +364,16 @@ func (p *paneWriter) renderNowLocked(force bool) error {
 	p.lastRender = time.Now()
 	p.renderCount++
 	next := p.screen.Snapshot()
-	var b strings.Builder
+	b := &p.buf
+	b.Reset()
 	for row := 0; row < p.rows; row++ {
 		if !paneCellsEqual(p.prev.Row(row), next.Row(row)) {
-			p.writeRow(&b, row, next.Row(row))
+			p.writeRow(b, row, next.Row(row))
 		}
 	}
-	p.writeCursor(&b, next)
+	p.writeCursor(b, next)
 	if b.Len() > 0 {
-		if _, err := p.stdout.WriteString(b.String()); err != nil {
+		if _, err := p.stdout.Write(b.Bytes()); err != nil {
 			next.Release()
 			return err
 		}
@@ -371,21 +385,21 @@ func (p *paneWriter) renderNowLocked(force bool) error {
 }
 
 func (p *paneWriter) renderRows(frame termemu.Frame) {
-	var b strings.Builder
+	var b bytes.Buffer
 	for row := 0; row < p.rows; row++ {
 		p.writeRow(&b, row, frame.Row(row))
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, _ = p.stdout.WriteString(b.String())
+	_, _ = p.stdout.Write(b.Bytes())
 }
 
 func (p *paneWriter) moveCursor(frame termemu.Frame) {
-	var b strings.Builder
+	var b bytes.Buffer
 	p.writeCursor(&b, frame)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, _ = p.stdout.WriteString(b.String())
+	_, _ = p.stdout.Write(b.Bytes())
 }
 
 func (p *paneWriter) RecordingPrefix() []byte {
@@ -401,7 +415,7 @@ func (p *paneWriter) RecordingPrefix() []byte {
 }
 
 func (p *paneWriter) frameToANSI(frame termemu.Frame) []byte {
-	var b strings.Builder
+	var b bytes.Buffer
 	b.WriteString("\x1b[0m\x1b[H\x1b[2J")
 	if frame.CursorVisible {
 		b.WriteString("\x1b[?25h")
@@ -427,15 +441,15 @@ func (p *paneWriter) frameToANSI(frame termemu.Frame) []byte {
 		y = frame.Rows - 1
 	}
 	fmt.Fprintf(&b, "\x1b[%d;%dH\x1b[0m", y+1, x+1)
-	return []byte(b.String())
+	return append([]byte(nil), b.Bytes()...)
 }
 
-func (p *paneWriter) writeRow(b *strings.Builder, row int, cells []termemu.Cell) {
+func (p *paneWriter) writeRow(b *bytes.Buffer, row int, cells []termemu.Cell) {
 	fmt.Fprintf(b, "\x1b[%d;%dH", row+p.layout.contentTop, p.layout.contentLeft)
 	p.writeStyledCells(b, cells)
 }
 
-func (p *paneWriter) writeCursor(b *strings.Builder, frame termemu.Frame) {
+func (p *paneWriter) writeCursor(b *bytes.Buffer, frame termemu.Frame) {
 	if !frame.CursorVisible {
 		b.WriteString("\x1b[?25l")
 		return
@@ -457,7 +471,7 @@ func (p *paneWriter) writeCursor(b *strings.Builder, frame termemu.Frame) {
 	fmt.Fprintf(b, "\x1b[?25h\x1b[%d;%dH", y+p.layout.contentTop, x+p.layout.contentLeft)
 }
 
-func writePaneCell(b *strings.Builder, cell termemu.Cell) {
+func writePaneCell(b *bytes.Buffer, cell termemu.Cell) {
 	r := cell.Rune()
 	if r < 0x20 || r == 0x7f {
 		b.WriteByte(' ')

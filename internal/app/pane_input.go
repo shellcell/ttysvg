@@ -19,6 +19,7 @@ func (t *liveTerminal) FilterInput(data []byte, control *recordingControl) []byt
 func (t *liveTerminal) filterPaneInput(data []byte, control *recordingControl) []byte {
 	buf := append(t.inputBuf, data...)
 	t.inputBuf = nil
+	appCursor := t.applicationCursorKeys()
 	out := make([]byte, 0, len(buf))
 	for i := 0; i < len(buf); {
 		if buf[i] != 0x1b || i+1 >= len(buf) || buf[i+1] != '[' {
@@ -64,10 +65,26 @@ func (t *liveTerminal) filterPaneInput(data []byte, control *recordingControl) [
 			i += 6
 			continue
 		}
+		// In application cursor-key mode the child expects ESC O x for the
+		// parameterless cursor/Home/End keys; the real terminal sends ESC [ x.
+		if appCursor && isCursorKeyFinal(buf[i+2]) {
+			out = append(out, 0x1b, 'O', buf[i+2])
+			i += 3
+			continue
+		}
 		out = append(out, buf[i])
 		i++
 	}
 	return out
+}
+
+func isCursorKeyFinal(b byte) bool {
+	switch b {
+	case 'A', 'B', 'C', 'D', 'H', 'F':
+		return true
+	default:
+		return false
+	}
 }
 
 func handleControlKey(b byte, control *recordingControl) bool {

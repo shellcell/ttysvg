@@ -63,6 +63,7 @@ type Frame struct {
 	CursorX       int
 	CursorY       int
 	CursorVisible bool
+	box           *[]Cell // pool wrapper backing Data, nil for caller-built frames
 }
 
 func (f Frame) Row(row int) []Cell {
@@ -83,28 +84,37 @@ func (f Frame) Equal(other Frame) bool {
 }
 
 func (f *Frame) Release() {
-	if f == nil || f.Data == nil {
+	if f == nil {
 		return
 	}
-	releaseCells(f.Data)
+	if f.box != nil {
+		*f.box = f.Data[:cap(f.Data)]
+		releaseCells(f.box)
+		f.box = nil
+	}
 	f.Data = nil
 }
 
-var cellPool sync.Pool
+// cellPool stores *[]Cell wrappers rather than []Cell so that returning a buffer
+// to the pool reuses the original wrapper instead of boxing the slice header on
+// every Put (which would cost one allocation per Snapshot/Release cycle).
+var cellPool = sync.Pool{New: func() any { s := make([]Cell, 0); return &s }}
 
-func acquireCells(n int) []Cell {
-	if v := cellPool.Get(); v != nil {
-		cells := v.([]Cell)
-		if cap(cells) >= n {
-			return cells[:n]
-		}
+func acquireCells(n int) (*[]Cell, []Cell) {
+	box := cellPool.Get().(*[]Cell)
+	cells := *box
+	if cap(cells) >= n {
+		cells = cells[:n]
+	} else {
+		cells = make([]Cell, n)
 	}
-	return make([]Cell, n)
+	*box = cells
+	return box, cells
 }
 
-func releaseCells(cells []Cell) {
-	if cap(cells) > 1<<20 {
-		return
+func releaseCells(box *[]Cell) {
+	if cap(*box) > 1<<20 {
+		return // let GC reclaim oversized buffers instead of pinning them
 	}
-	cellPool.Put(cells[:cap(cells)])
+	cellPool.Put(box)
 }

@@ -2,6 +2,8 @@ package app
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -80,27 +82,68 @@ func TestPaneWriterTrailingRender(t *testing.T) {
 	t.Fatal("trailing repaint never fired")
 }
 
+// TestPaneInputTranslatesArrowsInApplicationMode covers the htop/ncdu arrow-key
+// fix: when the child enables DECCKM, the pane must rewrite the terminal's
+// ESC [ x cursor keys to the ESC O x form the child expects.
+func TestPaneInputTranslatesArrowsInApplicationMode(t *testing.T) {
+	p, cleanup := newTestPaneWriter(t, 80, 24)
+	defer cleanup()
+	live := p.live
+	live.decorated = true
+	live.writer = p
+
+	if got := live.FilterInput([]byte("\x1b[A"), nil); string(got) != "\x1b[A" {
+		t.Fatalf("normal mode should pass arrows unchanged, got %q", got)
+	}
+
+	if _, err := p.Write([]byte("\x1b[?1h")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"\x1b[A", "\x1bOA"}, {"\x1b[B", "\x1bOB"},
+		{"\x1b[C", "\x1bOC"}, {"\x1b[D", "\x1bOD"},
+		{"\x1b[H", "\x1bOH"}, {"\x1b[F", "\x1bOF"},
+	} {
+		if got := live.FilterInput([]byte(tc.in), nil); string(got) != tc.want {
+			t.Fatalf("app mode %q -> %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	// Modifier-encoded arrows keep their parameters and must not be rewritten.
+	if got := live.FilterInput([]byte("\x1b[1;2A"), nil); string(got) != "\x1b[1;2A" {
+		t.Fatalf("modified arrow should pass unchanged, got %q", got)
+	}
+
+	if _, err := p.Write([]byte("\x1b[?1l")); err != nil {
+		t.Fatal(err)
+	}
+	if got := live.FilterInput([]byte("\x1b[A"), nil); string(got) != "\x1b[A" {
+		t.Fatalf("after disabling app mode arrows should pass unchanged, got %q", got)
+	}
+}
+
+func TestWriteUint8(t *testing.T) {
+	for v := 0; v <= 255; v++ {
+		var b strings.Builder
+		writeUint8(&b, uint8(v))
+		if got, want := b.String(), strconv.Itoa(v); got != want {
+			t.Fatalf("writeUint8(%d) = %q, want %q", v, got, want)
+		}
+	}
+}
+
+func TestLiveStyleSGRTruecolor(t *testing.T) {
+	s := liveStyle{fg: liveColor{r: 1, g: 22, b: 255, set: true}, bg: liveColor{r: 0, g: 100, b: 9, set: true}, bold: true}
+	if got, want := s.sgr(), "\x1b[0;1;38;2;1;22;255;48;2;0;100;9m"; got != want {
+		t.Fatalf("sgr() = %q, want %q", got, want)
+	}
+}
+
 func TestPaneFlushIntervalFor(t *testing.T) {
 	if got := paneFlushIntervalFor(80, 24); got != paneFlushInterval {
 		t.Fatalf("small pane interval = %v, want %v", got, paneFlushInterval)
 	}
 	if got := paneFlushIntervalFor(300, 100); got != paneFlushIntervalLarge {
 		t.Fatalf("large pane interval = %v, want %v", got, paneFlushIntervalLarge)
-	}
-}
-
-// BenchmarkPaneWriterBurst measures the cost of feeding a burst of output
-// through the pane writer (the live preview hot path).
-func BenchmarkPaneWriterBurst(b *testing.B) {
-	p, cleanup := newTestPaneWriter(b, 120, 40)
-	defer cleanup()
-	chunk := []byte("\x1b[32mok\x1b[0m  building target \x1b[2m(cached)\x1b[0m\r\n")
-	b.ReportAllocs()
-	b.SetBytes(int64(len(chunk)))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := p.Write(chunk); err != nil {
-			b.Fatal(err)
-		}
 	}
 }

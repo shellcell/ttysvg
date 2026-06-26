@@ -13,7 +13,6 @@ _ttysvg() {
     '-padding+[SVG padding in pixels]:pixels:' \
     '-theme+[SVG theme]:theme:(auto dark light)' \
     '-bg+[background color during recording, e.g. #0d1117]:color:' \
-    '-minify[write SVG without optional whitespace]' \
     '-no-query-terminal[do not query current terminal colors before recording]' \
     '-no-clear[do not clear terminal before recording starts]' \
     '-version[print version and exit]' \
