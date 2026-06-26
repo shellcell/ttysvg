@@ -146,7 +146,10 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 }
 
 func (cfg *Config) setDefaults() error {
-	detected := detectTerminalStyle()
+	var detected terminalStyle
+	if cfg.QueryTerminal {
+		detected = detectTerminalStyle()
+	}
 	if cfg.OutputPath == "" {
 		cfg.OutputPath = "."
 	}

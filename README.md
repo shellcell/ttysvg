@@ -44,19 +44,21 @@ ttysvg -o demo.svg -- go test ./...
 -frame dur          minimum time between SVG snapshots; default 80ms
 -idle dur           capture after output silence; default 60ms; 0 disables
 -font-family s      SVG CSS font-family; defaults to detected terminal font plus fallbacks
--font-size px       SVG font size; defaults to terminal font size or 14
+-font-size px       SVG output font size; does not change the live terminal font; defaults to detected size with -query-terminal, otherwise 14
 -cell-width px      SVG cell width; defaults to font-size*0.62
 -cell-height px     SVG cell height; defaults to font-size*1.25
 -theme name         auto, dark, or light; default auto
 -bg color           terminal background color during recording, e.g. #0d1117; also used as SVG background
 -padding px         SVG background frame around the terminal grid; default 0
--no-query-terminal  do not query current terminal colors before recording
+-query-terminal     query/identify the terminal for colors, theme, and font before recording; off by default
 -no-clear           do not clear the terminal before recording starts
 -version            print version and exit
 -q                  suppress progress and summary
 ```
 
 `-frame` and `-idle` take Go durations such as `80ms`, `1s`, or `1500us`.
+
+Terminal identification is off by default to minimize startup latency. Pass `-query-terminal` to detect terminal colors/theme/font from supported terminal config files and live terminal color queries.
 
 When `-size` is set (including a width- or height-only form like `100x` or `x30`), `ttysvg` compares the requested recording size with the current terminal. If it is the same size, recording runs directly in the terminal as usual. If it is larger, recording does not start and `ttysvg` asks you to resize the terminal first. If it is smaller, `ttysvg` starts the child session in a visible pane so you can prepare before recording. Use the pane buttons or keyboard shortcuts: `Ctrl-R` starts/resumes, `Ctrl-P` pauses/resumes, and `Ctrl-Q` stops. The prepared screen and each resume screen are captured as static SVG frames, then later output animates from those states. Paused output is live and interactive but is not recorded.
 

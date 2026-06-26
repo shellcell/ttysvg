@@ -75,18 +75,6 @@ func ensureWritableTarget(path string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create output directory %s: %w", dir, err)
 	}
-	test, err := os.CreateTemp(dir, ".ttysvg-write-test-*")
-	if err != nil {
-		return fmt.Errorf("create file in %s: %w", dir, err)
-	}
-	name := test.Name()
-	if err := test.Close(); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("close write test file: %w", err)
-	}
-	if err := os.Remove(name); err != nil {
-		return fmt.Errorf("remove write test file: %w", err)
-	}
 	return nil
 }
 

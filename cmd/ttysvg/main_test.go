@@ -48,11 +48,12 @@ func TestFindRetiredFlag(t *testing.T) {
 		{"cols-eq", []string{"-cols=80"}, "cols"},
 		{"frame-ms", []string{"-o", "x.svg", "-frame-ms", "80"}, "frame-ms"},
 		{"clear", []string{"--clear=false"}, "clear"},
+		{"no-query-terminal", []string{"-no-query-terminal"}, "no-query-terminal"},
 		{"minify", []string{"-minify"}, "minify"},
 		{"value-not-mistaken", []string{"-size", "100x", "-idle", "60ms"}, ""},
 		{"after-double-dash", []string{"--", "cmd", "-cols"}, ""},
 		{"after-command", []string{"mycmd", "-cols"}, ""},
-		{"current-flags-ok", []string{"-size", "x30", "-no-clear", "-frame", "80ms"}, ""},
+		{"current-flags-ok", []string{"-size", "x30", "-no-clear", "-query-terminal", "-frame", "80ms"}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

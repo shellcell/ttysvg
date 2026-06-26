@@ -46,11 +46,37 @@ func LoadTerminfo(term string) (Terminfo, bool) {
 	if term == "" {
 		return Terminfo{}, false
 	}
+	if info, ok := builtinTerminfo(term); ok {
+		return info, true
+	}
 	out, err := exec.Command("infocmp", "-1", "-x", term).Output()
 	if err != nil {
 		return Terminfo{}, false
 	}
 	return ParseTerminfo(out)
+}
+
+func builtinTerminfo(term string) (Terminfo, bool) {
+	name := strings.ToLower(term)
+	if !(strings.HasPrefix(name, "xterm") || strings.HasPrefix(name, "tmux") || strings.HasPrefix(name, "screen") || strings.HasPrefix(name, "rxvt") || strings.Contains(name, "kitty") || strings.Contains(name, "ghostty") || strings.Contains(name, "wezterm") || strings.Contains(name, "alacritty")) {
+		return Terminfo{}, false
+	}
+	return Terminfo{
+		fixed: []terminfoFixed{
+			{seq: []byte("\x1b[H\x1b[2J"), action: terminfoClear},
+			{seq: []byte("\x1b[?1049h"), action: terminfoEnterAlt},
+			{seq: []byte("\x1b[?1049l"), action: terminfoExitAlt},
+			{seq: []byte("\x1b[?25l"), action: terminfoCursorInvisible},
+			{seq: []byte("\x1b[?25h"), action: terminfoCursorNormal},
+			{seq: []byte("\x1b[1K"), action: terminfoEraseLineLeft},
+			{seq: []byte("\x1b[J"), action: terminfoEraseDisplay},
+			{seq: []byte("\x1b[K"), action: terminfoEraseLine},
+			{seq: []byte("\x1b7"), action: terminfoSaveCursor},
+			{seq: []byte("\x1b8"), action: terminfoRestoreCursor},
+			{seq: []byte("\x1b[H"), action: terminfoHome},
+		},
+		cup: compileTerminfoCursorPattern("\x1b[%i%p1%d;%p2%dH"),
+	}, true
 }
 
 func ParseTerminfo(data []byte) (Terminfo, bool) {
