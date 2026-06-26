@@ -13,7 +13,9 @@ var sampleOutput = []byte("\x1b[32mok\x1b[0m  package/one\r\n" +
 	"\x1b[1;34m=> building\x1b[0m widget \x1b[2m(cached)\x1b[0m\r\n" +
 	"plain line of output that fills part of the row\r\n")
 
-func BenchmarkScreenWrite(b *testing.B) {
+// Shared primitive (used by record-with-pane and svg rendering): parsing child
+// output into the emulator's screen buffer.
+func BenchmarkEmulatorScreenWrite(b *testing.B) {
 	s := NewScreen(120, 40)
 	b.ReportAllocs()
 	b.SetBytes(int64(len(sampleOutput)))
@@ -22,7 +24,9 @@ func BenchmarkScreenWrite(b *testing.B) {
 	}
 }
 
-func BenchmarkSnapshot(b *testing.B) {
+// Shared primitive (used by record-with-pane and svg rendering): copying the
+// screen into an immutable frame for diffing.
+func BenchmarkEmulatorSnapshot(b *testing.B) {
 	s := NewScreen(120, 40)
 	s.Write(sampleOutput)
 	b.ReportAllocs()
@@ -38,6 +42,9 @@ func BenchmarkSnapshot(b *testing.B) {
 // snapshot must stay far below one buffer's worth of cells, independent of the
 // screen size — if the pool is removed this jumps to hundreds of KB per op.
 func TestSnapshotMemoryIsPooled(t *testing.T) {
+	if raceEnabled {
+		t.Skip("allocation accounting is unreliable under the race detector")
+	}
 	for _, dim := range []struct {
 		cols, rows int
 	}{{80, 24}, {200, 60}} {

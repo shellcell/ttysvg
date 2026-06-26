@@ -13,7 +13,7 @@ import (
 	"github.com/rabarbra/ttysvg/internal/app"
 )
 
-var version = "0.0.4"
+var version = "0.0.5"
 
 // retiredFlags maps removed flag names to migration guidance. They are detected
 // before parsing so users get a pointed message instead of a bare "not defined".
@@ -24,6 +24,7 @@ var retiredFlags = map[string]string{
 	"idle-ms":        "use -idle with a duration, e.g. -idle 60ms",
 	"clear":          "clearing is on by default; pass -no-clear to disable it",
 	"query-terminal": "querying is on by default; pass -no-query-terminal to disable it",
+	"minify":         "SVG output is always compact now, so this flag is no longer needed",
 }
 
 // valueFlags are the flags that consume the following argument when written as
@@ -70,7 +71,6 @@ func run(args []string) (int, error) {
 	flags.Float64Var(&padding, "padding", 0, "SVG padding in px")
 	flags.StringVar(&cfg.Theme, "theme", "auto", "SVG theme: auto, dark, or light")
 	flags.StringVar(&cfg.Background, "bg", "", "terminal background color during recording, e.g. #0d1117; also used as SVG background")
-	flags.BoolVar(&cfg.Minify, "minify", false, "write SVG without optional whitespace")
 	flags.BoolVar(&noQueryTerminal, "no-query-terminal", false, "do not query current terminal colors before recording")
 	flags.BoolVar(&noClear, "no-clear", false, "do not clear the terminal before recording starts")
 	flags.BoolVar(&cfg.Quiet, "q", false, "do not print recording summary")
@@ -80,7 +80,7 @@ func run(args []string) (int, error) {
 		fmt.Fprintf(out, "Usage: ttysvg [flags] [--] [command [args...]]\n\n")
 		fmt.Fprintf(out, "With no command, ttysvg starts your shell in a recorder PTY. Type exit to stop recording.\n\n")
 		fmt.Fprintf(out, "Output:\n")
-		printFlags(flags, "o", "minify", "q")
+		printFlags(flags, "o", "q")
 		fmt.Fprintf(out, "\nRecording:\n")
 		printFlags(flags, "size", "frame", "idle", "no-clear", "no-query-terminal", "bg")
 		fmt.Fprintf(out, "\nAppearance:\n")

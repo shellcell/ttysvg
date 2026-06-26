@@ -44,6 +44,11 @@ type liveColor struct {
 }
 
 func liveColorFromHex(hex string) liveColor {
+	// Fast path: palette colors are already canonical "#rrggbb", so parse them
+	// directly and avoid the normalizing allocation parseRGB performs.
+	if r, g, b, ok := svg.HexToRGB(hex); ok {
+		return liveColor{r: r, g: g, b: b, set: true}
+	}
 	if r, g, b, ok := parseRGB(hex); ok {
 		return liveColor{r: r, g: g, b: b, set: true}
 	}
@@ -63,8 +68,17 @@ type liveStyle struct {
 }
 
 // appendSGR writes the SGR escape for this style directly into b, avoiding the
+// byteWriter is the subset of *strings.Builder / *bytes.Buffer used by the SGR
+// helpers, letting the render path reuse a bytes.Buffer while control drawing
+// keeps using a strings.Builder.
+type byteWriter interface {
+	WriteString(string) (int, error)
+	WriteByte(byte) error
+	Write([]byte) (int, error)
+}
+
 // per-style slice/Join/Sprintf allocations of the old sgr() string builder.
-func (s liveStyle) appendSGR(b *strings.Builder) {
+func (s liveStyle) appendSGR(b byteWriter) {
 	b.WriteString("\x1b[0")
 	if s.bold {
 		b.WriteString(";1")
@@ -112,18 +126,22 @@ func (s liveStyle) sgr() string {
 	return b.String()
 }
 
-func writeUint8(b *strings.Builder, v uint8) {
-	var tmp [3]byte
-	n := len(tmp)
-	for {
-		n--
-		tmp[n] = '0' + v%10
-		v /= 10
-		if v == 0 {
-			break
-		}
+// writeUint8 writes v (0-255) in decimal using only WriteByte, so it needs no
+// scratch slice; passing a stack array to b.Write would force it to the heap
+// because b is an interface.
+func writeUint8(b byteWriter, v uint8) {
+	if v >= 100 {
+		b.WriteByte('0' + v/100)
+		b.WriteByte('0' + v/10%10)
+		b.WriteByte('0' + v%10)
+		return
 	}
-	b.Write(tmp[n:])
+	if v >= 10 {
+		b.WriteByte('0' + v/10)
+		b.WriteByte('0' + v%10)
+		return
+	}
+	b.WriteByte('0' + v)
 }
 
 func parseRGB(color string) (uint8, uint8, uint8, bool) {

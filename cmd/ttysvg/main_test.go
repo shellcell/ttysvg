@@ -48,6 +48,7 @@ func TestFindRetiredFlag(t *testing.T) {
 		{"cols-eq", []string{"-cols=80"}, "cols"},
 		{"frame-ms", []string{"-o", "x.svg", "-frame-ms", "80"}, "frame-ms"},
 		{"clear", []string{"--clear=false"}, "clear"},
+		{"minify", []string{"-minify"}, "minify"},
 		{"value-not-mistaken", []string{"-size", "100x", "-idle", "60ms"}, ""},
 		{"after-double-dash", []string{"--", "cmd", "-cols"}, ""},
 		{"after-command", []string{"mycmd", "-cols"}, ""},

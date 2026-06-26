@@ -14,21 +14,22 @@ type Screen struct {
 	alternate buffer
 	active    *buffer
 
-	style         Style
-	cursorVisible bool
-	autoWrap      bool
-	originMode    bool
-	lineDrawing   bool
-	parser        parserState
-	csi           [256]byte
-	csiLen        int
-	utf8Buf       [utf8.UTFMax]byte
-	utf8Len       int
-	lastCell      Cell
-	lastWidth     int
-	hasLastCell   bool
-	terminfo      Terminfo
-	tabStops      []bool
+	style             Style
+	cursorVisible     bool
+	autoWrap          bool
+	originMode        bool
+	applicationCursor bool
+	lineDrawing       bool
+	parser            parserState
+	csi               [256]byte
+	csiLen            int
+	utf8Buf           [utf8.UTFMax]byte
+	utf8Len           int
+	lastCell          Cell
+	lastWidth         int
+	hasLastCell       bool
+	terminfo          Terminfo
+	tabStops          []bool
 }
 
 type buffer struct {
@@ -74,13 +75,19 @@ func newBuffer(cols, rows int) buffer {
 }
 
 func (s *Screen) Snapshot() Frame {
-	cells := acquireCells(len(s.active.cells))
+	box, cells := acquireCells(len(s.active.cells))
 	copy(cells, s.active.cells)
-	return Frame{Cols: s.cols, Rows: s.rows, Data: cells, CursorX: s.active.x, CursorY: s.active.y, CursorVisible: s.cursorVisible}
+	return Frame{Cols: s.cols, Rows: s.rows, Data: cells, CursorX: s.active.x, CursorY: s.active.y, CursorVisible: s.cursorVisible, box: box}
 }
 
 func (s *Screen) AlternateActive() bool {
 	return s.active == &s.alternate
+}
+
+// ApplicationCursorKeys reports whether the child has enabled DECCKM, in which
+// case the arrow/Home/End keys are expected to send ESC O x instead of ESC [ x.
+func (s *Screen) ApplicationCursorKeys() bool {
+	return s.applicationCursor
 }
 
 func (s *Screen) SetTerminfo(info Terminfo) {
@@ -859,6 +866,10 @@ func (s *Screen) setModes(params csiParams, enabled bool) bool {
 	for i := 0; i < params.n; i++ {
 		mode := params.value(i, 0)
 		switch mode {
+		case 1:
+			// DECCKM: application cursor keys. Does not change the rendered
+			// screen, but the pane uses it to translate arrow-key input.
+			s.applicationCursor = enabled
 		case 6:
 			if s.originMode != enabled {
 				s.originMode = enabled
@@ -936,6 +947,7 @@ func (s *Screen) reset() {
 	s.cursorVisible = true
 	s.autoWrap = true
 	s.originMode = false
+	s.applicationCursor = false
 	s.lineDrawing = false
 	s.parser = stateGround
 	s.csiLen = 0
@@ -955,6 +967,7 @@ func (s *Screen) softReset() bool {
 	s.cursorVisible = true
 	s.autoWrap = true
 	s.originMode = false
+	s.applicationCursor = false
 	s.lineDrawing = false
 	s.active.wrap = false
 	s.active.scrollTop = 0

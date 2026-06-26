@@ -50,7 +50,6 @@ ttysvg -o demo.svg -- go test ./...
 -theme name         auto, dark, or light; default auto
 -bg color           terminal background color during recording, e.g. #0d1117; also used as SVG background
 -padding px         SVG background frame around the terminal grid; default 0
--minify             write SVG without optional whitespace
 -no-query-terminal  do not query current terminal colors before recording
 -no-clear           do not clear the terminal before recording starts
 -version            print version and exit

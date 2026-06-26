@@ -34,7 +34,6 @@ type Config struct {
 	CellWidth     float64
 	CellHeight    float64
 	Padding       float64
-	Minify        bool
 	QueryTerminal bool
 	ClearTerminal bool
 	Quiet         bool
@@ -256,7 +255,6 @@ func render(ctx context.Context, cfg Config, logPath string) (renderStats, error
 		CellWidth:  cfg.CellWidth,
 		CellHeight: cfg.CellHeight,
 		Padding:    cfg.Padding,
-		Minify:     cfg.Minify,
 	})
 	if err := renderer.Begin(); err != nil {
 		return renderStats{}, err

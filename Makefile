@@ -16,7 +16,7 @@ RELEASE_TARGETS := \
 	macos_x86_64 \
 	macos_arm64
 
-.PHONY: test tests bench mandoc release build-release checksums size-report clean $(RELEASE_TARGETS)
+.PHONY: test tests bench bench-report mandoc release build-release checksums size-report clean $(RELEASE_TARGETS)
 
 .NOTPARALLEL: release
 
@@ -30,6 +30,10 @@ test tests:
 BENCHTIME ?= 1x
 bench:
 	go test -run='^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) ./...
+
+# Render benchmark results as a Markdown table (as published in releases).
+bench-report:
+	@go test -run='^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) ./... | awk -f scripts/benchtable.awk
 
 mandoc:
 	@command -v mandoc >/dev/null 2>&1 || { printf 'mandoc is required to validate %s\n' "$(MANPAGE)"; exit 1; }
