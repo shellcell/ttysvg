@@ -35,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -55,6 +56,16 @@ jobs:
 
       - name: Build release artifacts
         run: make release VERSION="${GITHUB_REF_NAME}"
+
+      - name: Install nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Install gettext
+        run: sudo apt-get update && sudo apt-get install -y gettext-base
+
+      - name: Build distro packages (.deb/.rpm)
+        run: make packages VERSION="${GITHUB_REF_NAME}"
 
       - name: Report binary sizes
         run: |
@@ -90,4 +101,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --notes-file dist/release-notes.md \
-            dist/*.tar.gz dist/checksums.txt dist/SIZES.txt dist/BENCHMARKS.md
+            dist/*.tar.gz dist/*.deb dist/*.rpm dist/checksums.txt dist/SIZES.txt dist/BENCHMARKS.md

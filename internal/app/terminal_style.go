@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -298,26 +297,65 @@ func parseWezTermStyle(paths []string) terminalStyle {
 
 func parseWezTermConfig(data string) terminalStyle {
 	var style terminalStyle
-	if m := regexp.MustCompile(`(?m)font_size\s*=\s*([0-9.]+)`).FindStringSubmatch(data); len(m) == 2 {
-		style.FontSize = parsePositiveFloat(m[1])
-	}
-	if m := regexp.MustCompile(`(?s)font\s*=\s*wezterm\.font(?:_with_fallback)?\s*\((.*?)\)`).FindStringSubmatch(data); len(m) == 2 {
-		style.FontFamily = strings.Join(quotedStrings(m[1]), ", ")
-	}
-	if m := regexp.MustCompile(`(?m)color_scheme\s*=\s*["']([^"']+)["']`).FindStringSubmatch(data); len(m) == 2 {
-		style.Theme = themeFromName(m[1])
-	}
+	eachAssignment(data, "font_size", func(v int) bool {
+		end := v
+		for end < len(data) && (data[end] == '.' || (data[end] >= '0' && data[end] <= '9')) {
+			end++
+		}
+		if end == v {
+			return false
+		}
+		style.FontSize = parsePositiveFloat(data[v:end])
+		return true
+	})
+	eachAssignment(data, "font", func(v int) bool {
+		const fn = "wezterm.font"
+		if !strings.HasPrefix(data[v:], fn) {
+			return false
+		}
+		q := v + len(fn)
+		if strings.HasPrefix(data[q:], "_with_fallback") {
+			q += len("_with_fallback")
+		}
+		q = skipSpaces(data, q)
+		if q >= len(data) || data[q] != '(' {
+			return false
+		}
+		end := q + 1
+		for end < len(data) && data[end] != ')' {
+			end++
+		}
+		if end >= len(data) {
+			return false
+		}
+		style.FontFamily = strings.Join(quotedStrings(data[q+1:end]), ", ")
+		return true
+	})
+	eachAssignment(data, "color_scheme", func(v int) bool {
+		if v >= len(data) || (data[v] != '"' && data[v] != '\'') {
+			return false
+		}
+		end := v + 1
+		for end < len(data) && data[end] != '"' && data[end] != '\'' {
+			end++
+		}
+		if end >= len(data) || end == v+1 {
+			return false
+		}
+		style.Theme = themeFromName(data[v+1 : end])
+		return true
+	})
 	style.Colors.Background = firstHexAssignment(data, "background")
 	style.Colors.Foreground = firstHexAssignment(data, "foreground")
-	if m := regexp.MustCompile(`(?s)ansi\s*=\s*\{(.*?)\}`).FindStringSubmatch(data); len(m) == 2 {
-		for i, color := range quotedHexColors(m[1]) {
+	if body, ok := bracedAssignment(data, "ansi"); ok {
+		for i, color := range quotedHexColors(body) {
 			if i < 8 {
 				style.Colors.ANSI[i] = color
 			}
 		}
 	}
-	if m := regexp.MustCompile(`(?s)brights\s*=\s*\{(.*?)\}`).FindStringSubmatch(data); len(m) == 2 {
-		for i, color := range quotedHexColors(m[1]) {
+	if body, ok := bracedAssignment(data, "brights"); ok {
+		for i, color := range quotedHexColors(body) {
 			if i < 8 {
 				style.Colors.ANSI[i+8] = color
 			}
@@ -969,9 +1007,83 @@ func firstFloat(values ...float64) float64 {
 	return 0
 }
 
+// skipSpaces returns the index of the first byte at or after i that is not an
+// ASCII whitespace byte, matching the bytes RE2's \s covers ([\t\n\f\r ]).
+func skipSpaces(s string, i int) int {
+	for i < len(s) {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r', '\f':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// eachAssignment finds each position where key is followed by optional spaces,
+// '=', and optional spaces, in order, and calls fn with the index of the value.
+// fn returns true to stop. This mirrors how the previous `key\s*=\s*...`
+// regexes matched the first assignment whose value also matched.
+func eachAssignment(data, key string, fn func(valueStart int) bool) {
+	from := 0
+	for {
+		idx := strings.Index(data[from:], key)
+		if idx < 0 {
+			return
+		}
+		p := skipSpaces(data, from+idx+len(key))
+		if p < len(data) && data[p] == '=' {
+			if fn(skipSpaces(data, p+1)) {
+				return
+			}
+		}
+		from = from + idx + 1
+	}
+}
+
+// bracedAssignment returns the body between the first `key = { ... }` braces.
+func bracedAssignment(data, key string) (string, bool) {
+	var body string
+	var found bool
+	eachAssignment(data, key, func(v int) bool {
+		if v >= len(data) || data[v] != '{' {
+			return false
+		}
+		end := v + 1
+		for end < len(data) && data[end] != '}' {
+			end++
+		}
+		if end >= len(data) {
+			return false
+		}
+		body, found = data[v+1:end], true
+		return true
+	})
+	return body, found
+}
+
 func jsoncToJSON(data string) string {
-	data = stripJSONComments(data)
-	return regexp.MustCompile(`,\s*([}\]])`).ReplaceAllString(data, `$1`)
+	return stripTrailingCommas(stripJSONComments(data))
+}
+
+// stripTrailingCommas removes a comma (and any whitespace after it) that
+// immediately precedes a closing '}' or ']', replicating the old
+// `,\s*([}\]])` -> `$1` substitution.
+func stripTrailingCommas(data string) string {
+	var b strings.Builder
+	b.Grow(len(data))
+	for i := 0; i < len(data); i++ {
+		if data[i] == ',' {
+			j := skipSpaces(data, i+1)
+			if j < len(data) && (data[j] == '}' || data[j] == ']') {
+				i = j - 1 // drop the comma and the whitespace; the brace is written next
+				continue
+			}
+		}
+		b.WriteByte(data[i])
+	}
+	return b.String()
 }
 
 func stripJSONComments(data string) string {
@@ -1019,12 +1131,27 @@ func stripJSONComments(data string) string {
 	return b.String()
 }
 
+// quotedStrings returns the contents of each quoted run, where a run opens with
+// a quote (' or "), contains one or more non-quote bytes, and closes with a
+// quote. Mirrors the old `["']([^"']+)["']` FindAll.
 func quotedStrings(data string) []string {
-	re := regexp.MustCompile(`["']([^"']+)["']`)
-	matches := re.FindAllStringSubmatch(data, -1)
-	values := make([]string, 0, len(matches))
-	for _, match := range matches {
-		values = append(values, match[1])
+	var values []string
+	for i := 0; i < len(data); {
+		if data[i] != '"' && data[i] != '\'' {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(data) && data[j] != '"' && data[j] != '\'' {
+			j++
+		}
+		if j >= len(data) {
+			break
+		}
+		if j > i+1 {
+			values = append(values, data[i+1:j])
+		}
+		i = j + 1
 	}
 	return values
 }
@@ -1039,12 +1166,36 @@ func quotedHexColors(data string) []string {
 	return colors
 }
 
+// firstHexAssignment finds the first `key = value` (value optionally quoted)
+// and returns its hex color, mirroring the old
+// `key\s*=\s*["']?([^"'\s,}]+)` match.
 func firstHexAssignment(data, key string) string {
-	re := regexp.MustCompile(`(?m)` + regexp.QuoteMeta(key) + `\s*=\s*["']?([^"'\s,}]+)`)
-	if m := re.FindStringSubmatch(data); len(m) == 2 {
-		return parseHexColor(m[1])
+	var result string
+	eachAssignment(data, key, func(v int) bool {
+		if v < len(data) && (data[v] == '"' || data[v] == '\'') {
+			v++
+		}
+		end := v
+		for end < len(data) && !isAssignTerminator(data[end]) {
+			end++
+		}
+		if end == v {
+			return false
+		}
+		result = parseHexColor(data[v:end])
+		return true
+	})
+	return result
+}
+
+// isAssignTerminator reports whether b ends an unquoted assignment value, i.e.
+// the negated class of `[^"'\s,}]`.
+func isAssignTerminator(b byte) bool {
+	switch b {
+	case '"', '\'', ' ', '\t', '\n', '\r', '\f', ',', '}':
+		return true
 	}
-	return ""
+	return false
 }
 
 func splitCSV(value string) []string {

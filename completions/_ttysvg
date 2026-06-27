@@ -3,7 +3,9 @@
 _ttysvg() {
   _arguments -C \
     '-o+[output SVG file or directory]:path:_files' \
+    '-gz[write a gzip-compressed .svgz file]' \
     '-size+[recording size as COLSxROWS; either side optional (100x, x30)]:size:' \
+    '-fps+[target frames per second; sets capture rate (overrides -frame/-idle)]:fps:' \
     '-frame+[minimum time between SVG frames, e.g. 80ms]:duration:' \
     '-idle+[capture after output silence, e.g. 60ms; 0 disables]:duration:' \
     '-font-size+[SVG output font size in pixels]:pixels:' \
@@ -15,6 +17,9 @@ _ttysvg() {
     '-bg+[background color during recording, e.g. #0d1117]:color:' \
     '-query-terminal[query/identify terminal colors, theme, and font before recording]' \
     '-no-clear[do not clear terminal before recording starts]' \
+    '-autostart[in pane mode, begin recording immediately instead of waiting for Ctrl-R]' \
+    '-headless[record the requested size directly with no interactive pane; for scripting and CI]' \
+    '-no-loop[play once and freeze the final screen instead of looping]' \
     '-version[print version and exit]' \
     '-q[suppress progress and summary]' \
     '(-h -help)'{-h,-help}'[show help]' \

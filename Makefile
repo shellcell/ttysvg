@@ -16,7 +16,7 @@ RELEASE_TARGETS := \
 	macos_x86_64 \
 	macos_arm64
 
-.PHONY: test tests bench bench-report mandoc release build-release checksums size-report clean $(RELEASE_TARGETS)
+.PHONY: test tests bench bench-report mandoc release build-release checksums size-report packages clean $(RELEASE_TARGETS)
 
 .NOTPARALLEL: release
 
@@ -53,6 +53,7 @@ $(1): | $(DIST)
 	mkdir -p "$(DIST)/$(APP)_$(VERSION)_$(2)/man/man1" "$(DIST)/$(APP)_$(VERSION)_$(2)/completions"
 	CGO_ENABLED=0 GOOS=$(3) GOARCH=$(4) $(if $(5),GOARM=$(5),) go build -trimpath -ldflags="$(LDFLAGS)" -o "$(DIST)/$(APP)_$(VERSION)_$(2)/$(APP)" $(CMD)
 	cp "$(MANPAGE)" "$(DIST)/$(APP)_$(VERSION)_$(2)/man/man1/$(APP).1"
+	cp LICENSE "$(DIST)/$(APP)_$(VERSION)_$(2)/LICENSE"
 	cp completions/ttysvg.bash "$(DIST)/$(APP)_$(VERSION)_$(2)/completions/$(APP).bash"
 	cp completions/ttysvg.fish "$(DIST)/$(APP)_$(VERSION)_$(2)/completions/$(APP).fish"
 	cp completions/_ttysvg "$(DIST)/$(APP)_$(VERSION)_$(2)/completions/_$(APP)"
@@ -83,6 +84,32 @@ size-report: build-release
 		mb=$$(awk "BEGIN { printf \"%.2f\", $${bytes} / 1000000 }"); \
 		printf '%-36s %12s\n' "$${name}" "$${mb}"; \
 	done | tee -a "$(DIST)/SIZES.txt"
+
+# Build .deb and .rpm packages from the prebuilt linux binaries using nfpm.
+# Covers amd64 and arm64, which is what apt/dnf users overwhelmingly need.
+# Override with `make packages NFPM_ARCHES="amd64"` to limit the set.
+NFPM_ARCHES ?= amd64 arm64
+PKG_VERSION ?= $(patsubst v%,%,$(VERSION))
+
+packages: build-release | $(DIST)
+	@command -v nfpm >/dev/null 2>&1 || { printf 'nfpm is required to build packages: https://nfpm.goreleaser.com\n'; exit 1; }
+	@for arch in $(NFPM_ARCHES); do \
+		case "$$arch" in \
+			amd64) dir=linux_x86_64 ;; \
+			arm64) dir=linux_arm64 ;; \
+			386)   dir=linux_x86 ;; \
+			arm)   dir=linux_arm ;; \
+			*) printf 'unknown nfpm arch %s\n' "$$arch"; exit 1 ;; \
+		esac; \
+		bin="$(DIST)/$(APP)_$(VERSION)_$$dir/$(APP)"; \
+		[ -f "$$bin" ] || { printf 'missing %s; run make build-release first\n' "$$bin"; exit 1; }; \
+		for fmt in deb rpm; do \
+			printf 'packaging %s (%s)\n' "$$arch" "$$fmt"; \
+			PKG_VERSION="$(PKG_VERSION)" PKG_ARCH="$$arch" PKG_BIN="$$bin" \
+				envsubst < nfpm.yaml > "$(DIST)/nfpm.$$arch.$$fmt.yaml"; \
+			nfpm package -f "$(DIST)/nfpm.$$arch.$$fmt.yaml" -p "$$fmt" -t "$(DIST)"; \
+		done; \
+	done
 
 clean:
 	rm -rf "$(DIST)"

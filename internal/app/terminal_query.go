@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -60,28 +59,64 @@ func terminalColorQueries() string {
 
 func parseTerminalStyleResponse(response string) terminalStyle {
 	var style terminalStyle
-	for _, match := range regexp.MustCompile(`\x1b\](10|11);([^\x07\x1b]+)(?:\x07|\x1b\\)`).FindAllStringSubmatch(response, -1) {
-		color := parseTerminalColor(match[2])
-		if color == "" {
+	for _, fields := range parseOSCSequences(response) {
+		if len(fields) < 2 {
 			continue
 		}
-		if match[1] == "10" {
-			style.Colors.Foreground = color
-		} else {
-			style.Colors.Background = color
-		}
-	}
-	for _, match := range regexp.MustCompile(`\x1b\]4;([0-9]+);([^\x07\x1b]+)(?:\x07|\x1b\\)`).FindAllStringSubmatch(response, -1) {
-		idx, err := strconv.Atoi(match[1])
-		if err != nil || idx < 0 || idx >= len(style.Colors.ANSI) {
-			continue
-		}
-		if color := parseTerminalColor(match[2]); color != "" {
-			style.Colors.ANSI[idx] = color
+		switch fields[0] {
+		case "10", "11":
+			color := parseTerminalColor(strings.Join(fields[1:], ";"))
+			if color == "" {
+				continue
+			}
+			if fields[0] == "10" {
+				style.Colors.Foreground = color
+			} else {
+				style.Colors.Background = color
+			}
+		case "4":
+			if len(fields) < 3 {
+				continue
+			}
+			idx, err := strconv.Atoi(fields[1])
+			if err != nil || idx < 0 || idx >= len(style.Colors.ANSI) {
+				continue
+			}
+			if color := parseTerminalColor(strings.Join(fields[2:], ";")); color != "" {
+				style.Colors.ANSI[idx] = color
+			}
 		}
 	}
 	style.Theme = themeFromBackground(style.Colors.Background)
 	return style
+}
+
+// parseOSCSequences scans s for OSC sequences of the form
+// ESC ] body BEL  or  ESC ] body ESC \, returning each body split on ';'.
+// The body runs up to the first BEL or ESC, matching the terminal color
+// reports queried in terminalColorQueries.
+func parseOSCSequences(s string) [][]string {
+	var out [][]string
+	for i := 0; i < len(s); {
+		if s[i] != 0x1b || i+1 >= len(s) || s[i+1] != ']' {
+			i++
+			continue
+		}
+		j := i + 2
+		start := j
+		for j < len(s) && s[j] != 0x07 && s[j] != 0x1b {
+			j++
+		}
+		out = append(out, strings.Split(s[start:j], ";"))
+		switch {
+		case j < len(s) && s[j] == 0x07:
+			j++
+		case j+1 < len(s) && s[j] == 0x1b && s[j+1] == '\\':
+			j += 2
+		}
+		i = j
+	}
+	return out
 }
 
 func parseTerminalColor(value string) string {

@@ -53,6 +53,13 @@ func setupLiveTerminal(stdout *os.File, cfg Config) (*liveTerminal, error) {
 	if stdout == nil || !term.IsTerminal(int(stdout.Fd())) {
 		return live, nil
 	}
+	if cfg.Headless {
+		// Record the requested size directly, with no interactive pane, even on a
+		// real terminal. Output still streams to stdout; the event log is captured
+		// at cfg.Cols x cfg.Rows regardless of the visible terminal size.
+		live.wantBg = cfg.Background != "" && cfg.Colors.Background != ""
+		return live, nil
+	}
 	if !cfg.FixedSize {
 		live.wantBg = cfg.Background != "" && cfg.Colors.Background != ""
 		return live, nil
