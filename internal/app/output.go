@@ -15,6 +15,21 @@ import (
 
 const defaultOutputName = "ttysvg.svg"
 
+// svgzPath normalizes a resolved output path to the .svgz extension used for
+// gzip-compressed output: a .svg becomes .svgz, an existing .svgz is kept, and
+// anything else gets .svgz appended.
+func svgzPath(path string) string {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".svgz"):
+		return path
+	case strings.HasSuffix(lower, ".svg"):
+		return path + "z"
+	default:
+		return path + ".svgz"
+	}
+}
+
 func prepareOutputPath(request string, stdin *os.File, stderr io.Writer) (string, error) {
 	path, err := resolveOutputPath(request)
 	if err == nil {

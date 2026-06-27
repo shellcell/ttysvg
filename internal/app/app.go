@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/rabarbra/ttysvg/internal/eventlog"
@@ -37,6 +39,19 @@ type Config struct {
 	QueryTerminal bool
 	ClearTerminal bool
 	Quiet         bool
+	// Autostart begins recording immediately in pane mode instead of waiting for
+	// the Ctrl-R control. It has no effect in direct mode, which already records
+	// from the start.
+	Autostart bool
+	// Headless skips the interactive pane entirely and records the requested size
+	// directly, even on an interactive terminal. Intended for scripting and CI.
+	Headless bool
+	// NoLoop disables the default infinite loop so the SVG plays once and freezes
+	// on the final screen.
+	NoLoop bool
+	// Gzip writes a gzip-compressed .svgz file instead of a plain .svg. It is also
+	// enabled automatically when the output path ends in .svgz.
+	Gzip bool
 }
 
 func Run(ctx context.Context, cfg Config) (int, error) {
@@ -44,9 +59,15 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 	if err := cfg.setDefaults(); err != nil {
 		return 2, err
 	}
+	// A .svgz output path implies gzip; the -gz flag forces it regardless of
+	// extension. Either way the resolved path is normalized to end in .svgz.
+	cfg.Gzip = cfg.Gzip || strings.HasSuffix(strings.ToLower(cfg.OutputPath), ".svgz")
 	outputPath, err := prepareOutputPath(cfg.OutputPath, os.Stdin, os.Stderr)
 	if err != nil {
 		return 2, err
+	}
+	if cfg.Gzip {
+		outputPath = svgzPath(outputPath)
 	}
 	cfg.OutputPath = outputPath
 	if cfg.QueryTerminal {
@@ -96,6 +117,9 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 		defer control.Close()
 		sink = control
 		input = newPaneInputReader(os.Stdin, liveTerminal, control)
+		if cfg.Autostart {
+			control.StartOrResume()
+		}
 	}
 	recorder := ptyrec.Recorder{
 		Command: cfg.Command,
@@ -229,6 +253,30 @@ type renderStats struct {
 	Size     int64
 }
 
+// scanRecordingDuration returns the timestamp of the last event in the log,
+// i.e. the recording length. It reads the framing and timestamps only (no
+// terminal emulation), so it is cheap relative to the render pass.
+func scanRecordingDuration(logPath string) (time.Duration, error) {
+	f, err := os.Open(logPath)
+	if err != nil {
+		return 0, fmt.Errorf("open event log: %w", err)
+	}
+	defer f.Close()
+	reader := eventlog.NewReader(f)
+	var last time.Duration
+	for {
+		record, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return 0, fmt.Errorf("scan event log: %w", err)
+		}
+		last = record.At
+	}
+	return last, nil
+}
+
 func render(ctx context.Context, cfg Config, logPath string) (renderStats, error) {
 	in, err := os.Open(logPath)
 	if err != nil {
@@ -241,6 +289,17 @@ func render(ctx context.Context, cfg Config, logPath string) (renderStats, error
 	}
 	counter := &countingReader{r: in}
 
+	// Looping needs the total recording length up front so each reveal can be
+	// timed as a fraction of the loop period. A cheap timestamp-only scan of the
+	// event log (no terminal emulation) yields it before the render pass.
+	var totalDuration time.Duration
+	if !cfg.NoLoop {
+		totalDuration, err = scanRecordingDuration(logPath)
+		if err != nil {
+			return renderStats{}, err
+		}
+	}
+
 	out, err := createOutput(cfg.OutputPath)
 	if err != nil {
 		return renderStats{}, err
@@ -248,16 +307,29 @@ func render(ctx context.Context, cfg Config, logPath string) (renderStats, error
 	defer out.cleanup()
 
 	bufferedOut := bufio.NewWriterSize(out.file, 256*1024)
-	renderer := svg.NewRenderer(bufferedOut, svg.Config{
-		Cols:       cfg.Cols,
-		Rows:       cfg.Rows,
-		Theme:      cfg.Theme,
-		FontSize:   cfg.FontSize,
-		FontFamily: cfg.FontFamily,
-		Colors:     cfg.Colors,
-		CellWidth:  cfg.CellWidth,
-		CellHeight: cfg.CellHeight,
-		Padding:    cfg.Padding,
+	// Optionally compress the SVG stream into a .svgz. The renderer writes through
+	// the gzip writer, which writes compressed bytes into the buffered file.
+	var renderTarget io.Writer = bufferedOut
+	var gzipWriter *gzip.Writer
+	if cfg.Gzip {
+		gzipWriter, err = gzip.NewWriterLevel(bufferedOut, gzip.BestCompression)
+		if err != nil {
+			return renderStats{}, fmt.Errorf("init gzip writer: %w", err)
+		}
+		renderTarget = gzipWriter
+	}
+	renderer := svg.NewRenderer(renderTarget, svg.Config{
+		Cols:          cfg.Cols,
+		Rows:          cfg.Rows,
+		Theme:         cfg.Theme,
+		FontSize:      cfg.FontSize,
+		FontFamily:    cfg.FontFamily,
+		Colors:        cfg.Colors,
+		CellWidth:     cfg.CellWidth,
+		CellHeight:    cfg.CellHeight,
+		Padding:       cfg.Padding,
+		Loop:          !cfg.NoLoop,
+		TotalDuration: totalDuration,
 	})
 	if err := renderer.Begin(); err != nil {
 		return renderStats{}, err
@@ -283,6 +355,11 @@ func render(ctx context.Context, cfg Config, logPath string) (renderStats, error
 	}
 	if err := renderer.End(); err != nil {
 		return renderStats{}, err
+	}
+	if gzipWriter != nil {
+		if err := gzipWriter.Close(); err != nil {
+			return renderStats{}, fmt.Errorf("finish gzip stream: %w", err)
+		}
 	}
 	if err := bufferedOut.Flush(); err != nil {
 		return renderStats{}, fmt.Errorf("flush SVG: %w", err)

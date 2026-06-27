@@ -1,0 +1,33 @@
+# nfpm configuration for building .deb and .rpm packages.
+#
+# Driven by environment variables so one config covers every arch:
+#   PKG_VERSION  package version (without a leading "v")
+#   PKG_ARCH     nfpm arch, e.g. amd64, arm64, 386, arm
+#   PKG_BIN      path to the prebuilt ttysvg binary for that arch
+#
+# See the `packages` target in the Makefile, which sets these per build.
+name: ttysvg
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+section: utils
+priority: optional
+maintainer: Polina Simonenko <rabarbrablad@gmail.com>
+description: |
+  Record terminal sessions as animated SVG.
+  ttysvg records an interactive terminal session in a child PTY and converts the
+  captured output into a self-contained, script-free animated SVG.
+vendor: rabarbra
+homepage: https://github.com/rabarbra/ttysvg
+license: MIT
+contents:
+  - src: ${PKG_BIN}
+    dst: /usr/bin/ttysvg
+  - src: ./docs/ttysvg.1
+    dst: /usr/share/man/man1/ttysvg.1
+  - src: ./completions/ttysvg.bash
+    dst: /usr/share/bash-completion/completions/ttysvg
+  - src: ./completions/ttysvg.fish
+    dst: /usr/share/fish/vendor_completions.d/ttysvg.fish
+  - src: ./completions/_ttysvg
+    dst: /usr/share/zsh/site-functions/_ttysvg

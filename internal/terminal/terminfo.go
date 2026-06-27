@@ -3,7 +3,6 @@ package terminal
 import (
 	"bytes"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,10 +35,21 @@ const (
 	terminfoLastLine
 )
 
+// terminfoCursorPattern matches a cursor-address (cup) sequence at the start of
+// a byte stream. The cup capability is a template of literal bytes interleaved
+// with two numeric parameters (row and column), so it is represented as an
+// ordered list of literal/number items and matched by hand, avoiding a regexp
+// dependency.
 type terminfoCursorPattern struct {
-	re        *regexp.Regexp
+	items     []cupItem
 	params    []int
 	increment bool
+}
+
+type cupItem struct {
+	literal string // literal bytes to match exactly (when isNum is false)
+	isNum   bool   // true for a numeric parameter capture
+	param   int    // parameter id (1 or 2) for a numeric item
 }
 
 func LoadTerminfo(term string) (Terminfo, bool) {
@@ -195,32 +205,35 @@ func unescapeTerminfoString(value string) string {
 func compileTerminfoCursorPattern(template string) *terminfoCursorPattern {
 	increment := strings.Contains(template, "%i")
 	template = strings.ReplaceAll(template, "%i", "")
+	var items []cupItem
 	var params []int
-	var re strings.Builder
+	var lit strings.Builder
+	flushLit := func() {
+		if lit.Len() > 0 {
+			items = append(items, cupItem{literal: lit.String()})
+			lit.Reset()
+		}
+	}
 	for i := 0; i < len(template); {
-		if strings.HasPrefix(template[i:], "%p1%d") || strings.HasPrefix(template[i:], "%p1%2") || strings.HasPrefix(template[i:], "%p1%3") || strings.HasPrefix(template[i:], "%p1%02d") || strings.HasPrefix(template[i:], "%p1%03d") {
-			params = append(params, 1)
-			re.WriteString(`([0-9]+)`)
-			i += terminfoParamTokenLen(template[i:])
+		if n := terminfoParamTokenLen(template[i:]); n > 0 {
+			param := 2
+			if strings.HasPrefix(template[i:], "%p1") {
+				param = 1
+			}
+			flushLit()
+			items = append(items, cupItem{isNum: true, param: param})
+			params = append(params, param)
+			i += n
 			continue
 		}
-		if strings.HasPrefix(template[i:], "%p2%d") || strings.HasPrefix(template[i:], "%p2%2") || strings.HasPrefix(template[i:], "%p2%3") || strings.HasPrefix(template[i:], "%p2%02d") || strings.HasPrefix(template[i:], "%p2%03d") {
-			params = append(params, 2)
-			re.WriteString(`([0-9]+)`)
-			i += terminfoParamTokenLen(template[i:])
-			continue
-		}
-		re.WriteString(regexp.QuoteMeta(template[i : i+1]))
+		lit.WriteByte(template[i])
 		i++
 	}
+	flushLit()
 	if len(params) != 2 {
 		return nil
 	}
-	compiled, err := regexp.Compile("^" + re.String())
-	if err != nil {
-		return nil
-	}
-	return &terminfoCursorPattern{re: compiled, params: params, increment: increment}
+	return &terminfoCursorPattern{items: items, params: params, increment: increment}
 }
 
 func terminfoParamTokenLen(s string) int {
@@ -236,22 +249,31 @@ func (p *terminfoCursorPattern) match(data []byte) (int, int, int, bool) {
 	if p == nil {
 		return 0, 0, 0, false
 	}
-	matches := p.re.FindSubmatchIndex(data)
-	if len(matches) != 6 || matches[0] != 0 {
-		return 0, 0, 0, false
-	}
+	pos := 0
 	values := map[int]int{}
-	for group, param := range p.params {
-		start := matches[2+group*2]
-		end := matches[3+group*2]
-		value, err := strconv.Atoi(string(data[start:end]))
+	for _, item := range p.items {
+		if !item.isNum {
+			if !bytes.HasPrefix(data[pos:], []byte(item.literal)) {
+				return 0, 0, 0, false
+			}
+			pos += len(item.literal)
+			continue
+		}
+		start := pos
+		for pos < len(data) && data[pos] >= '0' && data[pos] <= '9' {
+			pos++
+		}
+		if pos == start {
+			return 0, 0, 0, false
+		}
+		value, err := strconv.Atoi(string(data[start:pos]))
 		if err != nil {
 			return 0, 0, 0, false
 		}
 		if p.increment {
 			value--
 		}
-		values[param] = value
+		values[item.param] = value
 	}
-	return matches[1], values[2], values[1], true
+	return pos, values[2], values[1], true
 }

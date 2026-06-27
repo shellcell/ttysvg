@@ -197,6 +197,73 @@ func TestRendererEmitsNonFinalBlankRows(t *testing.T) {
 	}
 }
 
+func TestRendererLoopsWithIndependentAnimations(t *testing.T) {
+	var buf bytes.Buffer
+	// TotalDuration 1s -> period = 1s + loopEndHold(2s) = 3s.
+	renderer := NewRenderer(&buf, Config{Cols: 1, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12, Loop: true, TotalDuration: time.Second})
+	frame := terminal.Frame{Cols: 1, Rows: 1, Data: []terminal.Cell{{Ch: 'A'}}}
+
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.WriteFinalFrame(frame, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	// No shared timebase or syncbase references — each reveal repeats on its own.
+	if strings.Contains(out, `tb.begin`) || strings.Contains(out, `id="tb"`) {
+		t.Fatalf("loop should not use a shared timebase:\n%s", out)
+	}
+	if strings.Contains(out, `fill="freeze"`) {
+		t.Fatalf("frozen reveal would not loop:\n%s", out)
+	}
+	// Reveals are independent discrete animations repeating every period (3s).
+	if !strings.Contains(out, `<animate attributeName="opacity" calcMode="discrete" dur="3s" repeatCount="indefinite"`) {
+		t.Fatalf("missing independent looping animation:\n%s", out)
+	}
+	// The final 'A' reveal becomes visible at 1s/3s and holds to the loop end.
+	if !strings.Contains(out, `values="0;1" keyTimes="0;0.333333"`) {
+		t.Fatalf("final reveal timing wrong:\n%s", out)
+	}
+}
+
+func TestRendererPromotesRepeatedColor(t *testing.T) {
+	r := NewRenderer(&bytes.Buffer{}, Config{Cols: 1, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
+	const col = "#79808f" // not one of the 16 palette colors, fg, or bg
+
+	for i := 0; i < dynPromoteAt-1; i++ {
+		if got := r.fillToken(col); got != ` fill="`+col+`"` {
+			t.Fatalf("use %d: got %q, want inline fill", i+1, got)
+		}
+	}
+	if got := r.fillToken(col); got != ` class="c0"` {
+		t.Fatalf("promotion: got %q, want class reference", got)
+	}
+	if got := r.fillToken(col); got != ` class="c0"` {
+		t.Fatalf("after promotion: got %q, want class reference", got)
+	}
+	if !strings.Contains(r.dynStyle.String(), ".c0{fill:"+col+"}") {
+		t.Fatalf("missing dynamic class definition: %q", r.dynStyle.String())
+	}
+}
+
+func TestRendererKeepsRareColorInline(t *testing.T) {
+	r := NewRenderer(&bytes.Buffer{}, Config{Cols: 1, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
+	const col = "#123456"
+	for i := 0; i < dynPromoteAt-1; i++ {
+		if got := r.fillToken(col); got != ` fill="`+col+`"` {
+			t.Fatalf("rare color use %d should stay inline, got %q", i+1, got)
+		}
+	}
+	if r.dynStyle.Len() != 0 {
+		t.Fatalf("rare color should not be promoted, got defs %q", r.dynStyle.String())
+	}
+}
+
 func TestRendererClearsRowBeforeInverseHighlight(t *testing.T) {
 	var buf bytes.Buffer
 	renderer := NewRenderer(&buf, Config{Cols: 2, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})

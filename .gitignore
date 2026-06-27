@@ -5,4 +5,5 @@
 *.test
 *.out
 *.svg
+*.svgz
 !resources/*

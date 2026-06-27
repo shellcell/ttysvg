@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,13 @@ type Config struct {
 	CellWidth  float64
 	CellHeight float64
 	Padding    float64
+	// Loop makes the recording replay indefinitely. When false the animation
+	// plays once and freezes on the final screen.
+	Loop bool
+	// TotalDuration is the recording length. When looping, the loop period is
+	// TotalDuration plus a short hold, and it must be known up front so each
+	// reveal can be timed as a fraction of the period.
+	TotalDuration time.Duration
 }
 
 type Colors struct {
@@ -129,19 +137,46 @@ type Renderer struct {
 	nl         string
 	classOf    map[string]string
 	styleBlock string
+	dynToken   map[string]string // non-palette color -> ready-to-emit ` class="cN"` once promoted
+	dynSeen    map[string]int    // emission count per non-palette color, until promoted
+	dynStyle   strings.Builder   // accumulated `.cN{fill:#...}` defs, flushed in End
+	dynCount   int               // number of promoted dynamic classes
 	scratch    []byte            // reused for formatting numbers without per-value allocation
 	runeBuf    [utf8.UTFMax]byte // reused for UTF-8 encoding so it does not escape to the heap
 	frames     int
+	period     time.Duration // total loop period: last frame time plus loopEndHold
+	loop       bool
 	closed     bool
 }
 
-// writeFloat formats v (two decimals, trailing zeros trimmed) straight into the
-// output using a reused scratch buffer, avoiding the string allocation that
-// formatFloat incurs on every coordinate.
-func (r *Renderer) writeFloat(v float64) error {
-	r.scratch = appendTrimmedFloat(r.scratch[:0], v)
+// loopEndHold is how long the completed final screen is shown before the
+// animation repeats, so viewers can read the end state before it loops.
+const loopEndHold = 2 * time.Second
+
+// writeInt formats an integer coordinate straight into the output using the
+// reused scratch buffer, avoiding a string allocation per value.
+func (r *Renderer) writeInt(n int) error {
+	r.scratch = strconv.AppendInt(r.scratch[:0], int64(n), 10)
 	_, err := r.w.Write(r.scratch)
 	return err
+}
+
+// gridX, gridY, and baselineY return integer pixel positions for the grid.
+// Coordinates are rounded at the absolute position (not by rounding the cell
+// size and multiplying) so cumulative drift stays under half a pixel, and rect
+// widths/heights are taken as the difference of rounded edges so adjacent
+// backgrounds still tile seamlessly. Integer coordinates noticeably shrink the
+// per-cell x lists that dominate text output.
+func (r *Renderer) gridX(col int) int {
+	return int(math.Round(r.cfg.Padding + float64(col)*r.cfg.CellWidth))
+}
+
+func (r *Renderer) gridY(row int) int {
+	return int(math.Round(r.cfg.Padding + float64(row)*r.cfg.CellHeight))
+}
+
+func (r *Renderer) baselineY(row int) int {
+	return int(math.Round(r.cfg.Padding + float64(row)*r.cfg.CellHeight + r.cfg.FontSize))
 }
 
 func appendTrimmedFloat(dst []byte, v float64) []byte {
@@ -175,7 +210,7 @@ func newRenderer(w io.Writer, cfg Config, pal Palette) *Renderer {
 		active[i] = terminal.BlankCell()
 	}
 	classOf, styleBlock := buildColorClasses(pal)
-	return &Renderer{
+	r := &Renderer{
 		w:          w,
 		cfg:        cfg,
 		palette:    pal,
@@ -183,7 +218,14 @@ func newRenderer(w io.Writer, cfg Config, pal Palette) *Renderer {
 		rowStart:   make([]time.Duration, cfg.Rows),
 		classOf:    classOf,
 		styleBlock: styleBlock,
+		dynToken:   make(map[string]string),
+		dynSeen:    make(map[string]int),
+		loop:       cfg.Loop,
 	}
+	if cfg.Loop && cfg.TotalDuration > 0 {
+		r.period = cfg.TotalDuration + loopEndHold
+	}
+	return r
 }
 
 // buildColorClasses assigns a short CSS class to each palette color so the most
@@ -218,9 +260,22 @@ func buildColorClasses(pal Palette) (map[string]string, string) {
 	return classOf, style.String()
 }
 
+// dynPromoteAt is the emission count at which a non-palette color is promoted
+// from an inline fill to a shared CSS class. A class costs a one-time
+// definition plus a per-use reference that is shorter than the inline hex, so
+// promotion only pays off for colors that repeat. The threshold keeps rarely
+// used colors (e.g. a 256-color gradient where every cell differs) inline so
+// they never regress, while frequently repeated theme/truecolor fills collapse
+// to a class. dynClassCap bounds the worst-case style block.
+const (
+	dynPromoteAt = 8
+	dynClassCap  = 256
+)
+
 // fillToken returns the fill attribute for a color: nothing when it matches the
-// group's default (foreground), a class reference for other palette colors, and
-// an inline fill for colors outside the palette (256-cube / truecolor).
+// group's default (foreground), a class reference for palette colors, and for
+// other colors (256-cube / truecolor) an inline fill until the color has been
+// emitted dynPromoteAt times, after which it is promoted to a shared class.
 func (r *Renderer) fillToken(color string) string {
 	if color == r.palette.foreground {
 		return ""
@@ -228,16 +283,33 @@ func (r *Renderer) fillToken(color string) string {
 	if token, ok := r.classOf[color]; ok {
 		return token
 	}
+	if token, ok := r.dynToken[color]; ok {
+		return token
+	}
+	r.dynSeen[color]++
+	if r.dynSeen[color] >= dynPromoteAt && r.dynCount < dynClassCap {
+		name := "c" + strconv.Itoa(r.dynCount)
+		r.dynCount++
+		delete(r.dynSeen, color)
+		token := ` class="` + name + `"`
+		r.dynToken[color] = token
+		r.dynStyle.WriteString(".")
+		r.dynStyle.WriteString(name)
+		r.dynStyle.WriteString("{fill:")
+		r.dynStyle.WriteString(color)
+		r.dynStyle.WriteString("}")
+		return token
+	}
 	return ` fill="` + color + `"`
 }
 
 func (r *Renderer) Begin() error {
-	width := r.cfg.Padding*2 + float64(r.cfg.Cols)*r.cfg.CellWidth
-	height := r.cfg.Padding*2 + float64(r.cfg.Rows)*r.cfg.CellHeight
+	width := strconv.Itoa(int(math.Round(r.cfg.Padding*2 + float64(r.cfg.Cols)*r.cfg.CellWidth)))
+	height := strconv.Itoa(int(math.Round(r.cfg.Padding*2 + float64(r.cfg.Rows)*r.cfg.CellHeight)))
 	// The content group carries the default fill (foreground) so the most common
 	// text and the cursor rect can omit a fill/class attribute entirely.
 	const template = `<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="%s" height="%s" viewBox="0 0 %s %s" role="img"><title>Terminal recording</title><desc>Animated terminal recording generated by ttysvg.</desc><rect width="100%%" height="100%%" fill="%s"/><g font-family="%s" font-size="%s" fill="%s" text-rendering="geometricPrecision" shape-rendering="crispEdges" xml:space="preserve">`
-	if _, err := fmt.Fprintf(r.w, template, formatFloat(width), formatFloat(height), formatFloat(width), formatFloat(height), r.palette.background, html.EscapeString(r.cfg.FontFamily), formatFloat(r.cfg.FontSize), r.palette.foreground); err != nil {
+	if _, err := fmt.Fprintf(r.w, template, width, height, width, height, r.palette.background, html.EscapeString(r.cfg.FontFamily), formatFloat(r.cfg.FontSize), r.palette.foreground); err != nil {
 		return err
 	}
 	_, err := io.WriteString(r.w, r.styleBlock)
@@ -251,6 +323,12 @@ func (r *Renderer) WriteFrame(frame terminal.Frame, begin time.Duration, _ time.
 
 func (r *Renderer) WriteFinalFrame(frame terminal.Frame, begin time.Duration) error {
 	r.frames++
+	// Fallback when the period was not supplied up front (e.g. tests): derive it
+	// from the final frame time. Set before updateRows so the non-final reveals it
+	// emits use the same period as the final reveals below.
+	if r.period <= 0 {
+		r.period = begin + loopEndHold
+	}
 	if err := r.updateRows(frame, begin); err != nil {
 		return err
 	}
@@ -267,7 +345,18 @@ func (r *Renderer) End() error {
 		return nil
 	}
 	r.closed = true
-	_, err := io.WriteString(r.w, "</g>"+r.nl+"</svg>"+r.nl)
+	if _, err := io.WriteString(r.w, "</g>"+r.nl); err != nil {
+		return err
+	}
+	// Flush the classes promoted for frequently repeated non-palette colors. CSS
+	// applies regardless of element order, so this trailing <style> styles the
+	// class references already emitted above.
+	if r.dynStyle.Len() > 0 {
+		if _, err := io.WriteString(r.w, "<style>"+r.dynStyle.String()+"</style>"+r.nl); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(r.w, "</svg>"+r.nl)
 	return err
 }
 
@@ -307,20 +396,25 @@ func (r *Renderer) emitRow(row int, cells []terminal.Cell, begin time.Duration, 
 		return nil
 	}
 
-	// Rows start hidden (opacity 0) and a <set> reveals them for their interval.
+	// Rows start hidden (opacity 0); an animation reveals them for their interval.
 	// opacity 0/1 renders identically to visibility hidden/visible here but the
-	// attribute name and values are shorter, and it repeats on every frame row.
+	// attribute name and values are shorter.
 	if _, err := io.WriteString(r.w, `<g opacity="0">`+r.nl); err != nil {
 		return err
 	}
-	if final {
-		if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" fill="freeze"/>`+r.nl, formatTime(begin)); err != nil {
-			return err
+	if !r.loop {
+		// Play once: reveal at the absolute time and freeze the final state.
+		if final {
+			if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" fill="freeze"/>`+r.nl, formatTime(begin)); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" dur="%s"/>`+r.nl, formatTime(begin), formatTime(end-begin)); err != nil {
+				return err
+			}
 		}
-	} else {
-		if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" dur="%s"/>`+r.nl, formatTime(begin), formatTime(end-begin)); err != nil {
-			return err
-		}
+	} else if err := r.emitLoopReveal(begin, end, final); err != nil {
+		return err
 	}
 	if err := r.emitRowBackground(row); err != nil {
 		return err
@@ -338,31 +432,91 @@ func (r *Renderer) emitRow(row int, cells []terminal.Cell, begin time.Duration, 
 	return err
 }
 
-// writeRect emits a <rect> using writeFloat for the geometry and a cached fill
+// emitLoopReveal emits an independent discrete opacity animation that makes the
+// row's content visible only during [begin, end) of every loop iteration, where
+// the loop period is r.period. Using one self-contained
+// repeatCount="indefinite" animation per reveal — rather than a shared timebase
+// referenced by syncbase offsets — keeps the loop correct across SMIL engines.
+// Chrome, Firefox, and WebKit all repeat an independent animation reliably,
+// whereas a self-referencing clock (begin="0;tb.end") with syncbase offsets
+// desynchronizes or drops frames on later iterations in some engines.
+func (r *Renderer) emitLoopReveal(begin, end time.Duration, final bool) error {
+	period := r.period
+	if period <= 0 {
+		period = loopEndHold
+	}
+	if final {
+		end = period
+	}
+	if begin < 0 {
+		begin = 0
+	}
+	if end > period {
+		end = period
+	}
+	startsAtZero := begin <= 0
+	endsAtPeriod := end >= period
+	var values, keyTimes string
+	switch {
+	case startsAtZero && endsAtPeriod:
+		// Visible for the whole period. Two keyframes (rather than a lone value)
+		// so every engine treats it as a valid constant animation.
+		values, keyTimes = "1;1", "0;1"
+	case startsAtZero:
+		values, keyTimes = "1;0", "0;"+formatFraction(end, period)
+	case endsAtPeriod:
+		values, keyTimes = "0;1", "0;"+formatFraction(begin, period)
+	default:
+		values = "0;1;0"
+		keyTimes = "0;" + formatFraction(begin, period) + ";" + formatFraction(end, period)
+	}
+	_, err := fmt.Fprintf(r.w,
+		`<animate attributeName="opacity" calcMode="discrete" dur="%s" repeatCount="indefinite" values="%s" keyTimes="%s"/>`+r.nl,
+		formatTime(period), values, keyTimes)
+	return err
+}
+
+// formatFraction renders t/period as a fraction in [0,1] with enough precision
+// to preserve millisecond boundaries, trimming trailing zeros.
+func formatFraction(t, period time.Duration) string {
+	if period <= 0 {
+		return "0"
+	}
+	f := float64(t) / float64(period)
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	return trimFloat(strconv.FormatFloat(f, 'f', 6, 64))
+}
+
+// writeRect emits a <rect> using writeInt for the geometry and a cached fill
 // token, so a full frame's rects allocate nothing for their coordinates.
-func (r *Renderer) writeRect(x, y, w, h float64, fill string) error {
+func (r *Renderer) writeRect(x, y, w, h int, fill string) error {
 	if _, err := io.WriteString(r.w, `<rect x="`); err != nil {
 		return err
 	}
-	if err := r.writeFloat(x); err != nil {
+	if err := r.writeInt(x); err != nil {
 		return err
 	}
 	if _, err := io.WriteString(r.w, `" y="`); err != nil {
 		return err
 	}
-	if err := r.writeFloat(y); err != nil {
+	if err := r.writeInt(y); err != nil {
 		return err
 	}
 	if _, err := io.WriteString(r.w, `" width="`); err != nil {
 		return err
 	}
-	if err := r.writeFloat(w); err != nil {
+	if err := r.writeInt(w); err != nil {
 		return err
 	}
 	if _, err := io.WriteString(r.w, `" height="`); err != nil {
 		return err
 	}
-	if err := r.writeFloat(h); err != nil {
+	if err := r.writeInt(h); err != nil {
 		return err
 	}
 	if _, err := io.WriteString(r.w, `"`); err != nil {
@@ -376,9 +530,9 @@ func (r *Renderer) writeRect(x, y, w, h float64, fill string) error {
 }
 
 func (r *Renderer) emitRowBackground(row int) error {
-	y := r.cfg.Padding + float64(row)*r.cfg.CellHeight
-	width := float64(r.cfg.Cols) * r.cfg.CellWidth
-	return r.writeRect(r.cfg.Padding, y, width, r.cfg.CellHeight, r.fillToken(r.palette.background))
+	x := r.gridX(0)
+	y := r.gridY(row)
+	return r.writeRect(x, y, r.gridX(r.cfg.Cols)-x, r.gridY(row+1)-y, r.fillToken(r.palette.background))
 }
 
 func (r *Renderer) emitBackgrounds(row int, cells []terminal.Cell) error {
@@ -396,10 +550,9 @@ func (r *Renderer) emitBackgrounds(row int, cells []terminal.Cell) error {
 			}
 			col++
 		}
-		x := r.cfg.Padding + float64(start)*r.cfg.CellWidth
-		y := r.cfg.Padding + float64(row)*r.cfg.CellHeight
-		width := float64(col-start) * r.cfg.CellWidth
-		if err := r.writeRect(x, y, width, r.cfg.CellHeight, r.fillToken(bg)); err != nil {
+		x := r.gridX(start)
+		y := r.gridY(row)
+		if err := r.writeRect(x, y, r.gridX(col)-x, r.gridY(row+1)-y, r.fillToken(bg)); err != nil {
 			return err
 		}
 	}
@@ -420,7 +573,7 @@ func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 			col++
 		}
 		end := col
-		y := r.cfg.Padding + float64(row)*r.cfg.CellHeight + r.cfg.FontSize
+		y := r.baselineY(row)
 		if _, err := io.WriteString(r.w, `<text x="`); err != nil {
 			return err
 		}
@@ -430,15 +583,14 @@ func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 					return err
 				}
 			}
-			x := r.cfg.Padding + float64(cell)*r.cfg.CellWidth
-			if err := r.writeFloat(x); err != nil {
+			if err := r.writeInt(r.gridX(cell)); err != nil {
 				return err
 			}
 		}
 		if _, err := io.WriteString(r.w, `" y="`); err != nil {
 			return err
 		}
-		if err := r.writeFloat(y); err != nil {
+		if err := r.writeInt(y); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(r.w, `"`); err != nil {
@@ -493,25 +645,25 @@ func (r *Renderer) emitCursor(row int, cells []terminal.Cell) error {
 	if !r.cursorVis || r.cursorY != row || r.cursorX < 0 || r.cursorX >= len(cells) {
 		return nil
 	}
-	x := r.cfg.Padding + float64(r.cursorX)*r.cfg.CellWidth
-	y := r.cfg.Padding + float64(row)*r.cfg.CellHeight
-	if err := r.writeRect(x, y, r.cfg.CellWidth, r.cfg.CellHeight, r.fillToken(r.palette.foreground)); err != nil {
+	x := r.gridX(r.cursorX)
+	y := r.gridY(row)
+	if err := r.writeRect(x, y, r.gridX(r.cursorX+1)-x, r.gridY(row+1)-y, r.fillToken(r.palette.foreground)); err != nil {
 		return err
 	}
 	if !textCellVisible(cells[r.cursorX]) {
 		return nil
 	}
-	textY := y + r.cfg.FontSize
+	textY := r.baselineY(row)
 	if _, err := io.WriteString(r.w, `<text x="`); err != nil {
 		return err
 	}
-	if err := r.writeFloat(x); err != nil {
+	if err := r.writeInt(x); err != nil {
 		return err
 	}
 	if _, err := io.WriteString(r.w, `" y="`); err != nil {
 		return err
 	}
-	if err := r.writeFloat(textY); err != nil {
+	if err := r.writeInt(textY); err != nil {
 		return err
 	}
 	if _, err := io.WriteString(r.w, `"`); err != nil {

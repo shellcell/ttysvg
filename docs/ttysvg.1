@@ -1,4 +1,4 @@
-.Dd June 24, 2026
+.Dd June 27, 2026
 .Dt TTYSVG 1
 .Os
 .Sh NAME
@@ -7,11 +7,16 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl q
+.Op Fl gz
 .Op Fl no-clear
+.Op Fl autostart
+.Op Fl headless
+.Op Fl no-loop
 .Op Fl query-terminal
 .Op Fl version
 .Op Fl o Ar path
 .Op Fl size Ar COLSxROWS
+.Op Fl fps Ar n
 .Op Fl frame Ar duration
 .Op Fl idle Ar duration
 .Op Fl font-size Ar pixels
@@ -48,6 +53,24 @@ If it is a directory, the output file is
 named
 .Pa ttysvg.svg .
 The default is the current directory.
+.It Fl gz
+Write a gzip-compressed
+.Pa .svgz
+file instead of a plain
+.Pa .svg .
+This is also enabled automatically when the
+.Fl o
+path ends in
+.Pa .svgz .
+Useful for self-hosted pages and CI artifacts where smaller files matter and the
+server can send the
+.Ql Content-Encoding: gzip
+header.
+It is not suitable for GitHub READMEs, which serve
+.Pa .svgz
+without that header; commit the plain
+.Pa .svg
+there instead.
 .It Fl size Ar COLSxROWS
 Use a fixed PTY size, for example
 .Ql 120x40 .
@@ -59,16 +82,28 @@ for example
 (height only).
 The default is the current terminal size, or 80x24 when the size cannot be
 detected.
+.It Fl fps Ar n
+Target frames per second.
+Sets both the frame and idle capture intervals to
+.Ar 1/n
+seconds, providing a clearer way to choose the capture rate.
+This cannot be combined with
+.Fl frame
+or
+.Fl idle .
+Recording only emits a frame when the screen changes, so the rate is a ceiling
+during animation and adds nothing to idle stretches.
+The default rate is 30fps.
 .It Fl frame Ar duration
 Minimum time between sampled SVG frames, as a Go duration such as
-.Ql 80ms .
-The default is 80ms.
+.Ql 33ms .
+The default is 33ms (30fps).
 .It Fl idle Ar duration
 Capture a frame after this much output silence, as a Go duration.
 A value of
 .Ql 0
 disables idle capture.
-The default is 60ms.
+The default is 33ms.
 .It Fl font-size Ar pixels
 SVG output font size in pixels.
 This does not change the live terminal font during recording.
@@ -104,6 +139,24 @@ This is off by default to minimize startup latency.
 .It Fl no-clear
 Do not clear the terminal before recording starts.
 Clearing is on by default.
+.It Fl autostart
+In pane mode, begin recording immediately instead of waiting for the
+.Ic Ctrl-R
+control.
+The
+.Ic Ctrl-P
+and
+.Ic Ctrl-Q
+controls still pause and stop.
+This has no effect in direct mode, which already records from the start.
+.It Fl headless
+Skip the interactive pane entirely and record the requested size directly, even
+on an interactive terminal.
+Intended for scripting and continuous integration.
+.It Fl no-loop
+Play the recording once and freeze on the final screen.
+By default the SVG loops indefinitely, holding the final screen briefly before
+restarting.
 .It Fl version
 Print the version and exit.
 .It Fl q
@@ -126,4 +179,8 @@ ttysvg -o demo.svg
 ttysvg -o demo.svg -- vim
 ttysvg -size 100x30 -frame 80ms -theme dark -o demo.svg -- go test ./...
 ttysvg -size x30 -no-clear -o demo.svg
+ttysvg -headless -size 100x30 -q -o demo.svg -- make test
 .Ed
+.Pp
+Project page:
+.Lk https://github.com/rabarbra/ttysvg

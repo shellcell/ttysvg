@@ -1,0 +1,31 @@
+# Maintainer: Polina Simonenko <rabarbrablad@gmail.com>
+pkgname=ttysvg-bin
+_pkgname=ttysvg
+pkgver=0.0.7
+pkgrel=1
+pkgdesc="Record terminal sessions as animated SVG"
+arch=('x86_64' 'aarch64')
+url="https://github.com/rabarbra/ttysvg"
+license=('MIT')
+provides=('ttysvg')
+conflicts=('ttysvg')
+source_x86_64=("$url/releases/download/v$pkgver/${_pkgname}_v${pkgver}_linux_x86_64.tar.gz")
+source_aarch64=("$url/releases/download/v$pkgver/${_pkgname}_v${pkgver}_linux_arm64.tar.gz")
+# Replace SKIP with the sha256sums from the release checksums.txt before publishing.
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  local _dir
+  case "$CARCH" in
+    x86_64)  _dir="${_pkgname}_v${pkgver}_linux_x86_64" ;;
+    aarch64) _dir="${_pkgname}_v${pkgver}_linux_arm64" ;;
+  esac
+
+  install -Dm755 "$_dir/${_pkgname}" "$pkgdir/usr/bin/${_pkgname}"
+  install -Dm644 "$_dir/man/man1/${_pkgname}.1" "$pkgdir/usr/share/man/man1/${_pkgname}.1"
+  install -Dm644 "$_dir/completions/${_pkgname}.bash" "$pkgdir/usr/share/bash-completion/completions/${_pkgname}"
+  install -Dm644 "$_dir/completions/${_pkgname}.fish" "$pkgdir/usr/share/fish/vendor_completions.d/${_pkgname}.fish"
+  install -Dm644 "$_dir/completions/_${_pkgname}" "$pkgdir/usr/share/zsh/site-functions/_${_pkgname}"
+  install -Dm644 "$_dir/LICENSE" "$pkgdir/usr/share/licenses/${pkgname}/LICENSE"
+}
