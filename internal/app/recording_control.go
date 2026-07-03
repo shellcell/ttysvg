@@ -9,10 +9,16 @@ import (
 	"time"
 )
 
+// Pane control keys, always shown in the status bar so they are discoverable.
+// They are intercepted before reaching the child while the pane is active
+// (direct-mode recording filters nothing, so apps that need these bytes —
+// e.g. telnet's Ctrl-] escape — still receive them there). These two are the
+// least-contended control bytes: Ctrl-\ only means SIGQUIT (and is asciinema's
+// pause key), and Ctrl-] is telnet's own "escape the session" key; neither is
+// used by readline, tmux, screen, or fzf.
 const (
-	keyStart  = 0x12 // Ctrl-R
-	keyPause  = 0x10 // Ctrl-P
-	keyStop   = 0x11 // Ctrl-Q
+	keyToggle = 0x1c // Ctrl-\ : start / pause / resume
+	keyStop   = 0x1d // Ctrl-] : stop and save
 	frameHold = 250 * time.Millisecond
 )
 
@@ -216,6 +222,11 @@ type paneInputReader struct {
 
 func newPaneInputReader(src *os.File, live *liveTerminal, control *recordingControl) io.Reader {
 	return &paneInputReader{src: src, live: live, control: control}
+}
+
+// SetReadDeadline lets the recorder unblock the stdin copier at shutdown.
+func (r *paneInputReader) SetReadDeadline(t time.Time) error {
+	return r.src.SetReadDeadline(t)
 }
 
 func (r *paneInputReader) Read(p []byte) (int, error) {

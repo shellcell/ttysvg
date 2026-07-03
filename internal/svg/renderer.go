@@ -30,6 +30,9 @@ type Config struct {
 	// TotalDuration plus a short hold, and it must be known up front so each
 	// reveal can be timed as a fraction of the period.
 	TotalDuration time.Duration
+	// EndHold is how long the completed final screen is shown before the loop
+	// repeats. Zero means the default (loopEndHold).
+	EndHold time.Duration
 }
 
 type Colors struct {
@@ -101,15 +104,15 @@ func (p Palette) ResolveColor(color terminal.Color, foreground bool) string {
 
 func (p Palette) ResolveStyle(style terminal.Style) ResolvedStyle {
 	fg := style.Fg
-	if style.Bold && fg.Mode == terminal.ColorIndexed && fg.Index < 8 {
+	if style.Has(terminal.AttrBold) && fg.Mode == terminal.ColorIndexed && fg.Index < 8 {
 		fg.Index += 8
 	}
 	fgHex := p.ResolveColor(fg, true)
 	bgHex := p.ResolveColor(style.Bg, false)
-	if style.Inverse {
+	if style.Has(terminal.AttrInverse) {
 		fgHex, bgHex = bgHex, fgHex
 	}
-	if style.Hidden {
+	if style.Has(terminal.AttrHidden) {
 		fgHex = bgHex
 	}
 	return ResolvedStyle{Fg: fgHex, Bg: bgHex}
@@ -134,7 +137,6 @@ type Renderer struct {
 	cursorX    int
 	cursorY    int
 	cursorVis  bool
-	nl         string
 	classOf    map[string]string
 	styleBlock string
 	dynToken   map[string]string // non-palette color -> ready-to-emit ` class="cN"` once promoted
@@ -149,9 +151,18 @@ type Renderer struct {
 	closed     bool
 }
 
-// loopEndHold is how long the completed final screen is shown before the
+// loopEndHold is the default hold on the completed final screen before the
 // animation repeats, so viewers can read the end state before it loops.
+// Overridable via Config.EndHold (the -hold flag).
 const loopEndHold = 2 * time.Second
+
+// endHold returns the configured final-screen hold, defaulting to loopEndHold.
+func (r *Renderer) endHold() time.Duration {
+	if r.cfg.EndHold > 0 {
+		return r.cfg.EndHold
+	}
+	return loopEndHold
+}
 
 // writeInt formats an integer coordinate straight into the output using the
 // reused scratch buffer, avoiding a string allocation per value.
@@ -179,18 +190,6 @@ func (r *Renderer) baselineY(row int) int {
 	return int(math.Round(r.cfg.Padding + float64(row)*r.cfg.CellHeight + r.cfg.FontSize))
 }
 
-func appendTrimmedFloat(dst []byte, v float64) []byte {
-	dst = strconv.AppendFloat(dst, v, 'f', 2, 64)
-	end := len(dst)
-	for end > 0 && dst[end-1] == '0' {
-		end--
-	}
-	if end > 0 && dst[end-1] == '.' {
-		end--
-	}
-	return dst[:end]
-}
-
 func NewRenderer(w io.Writer, cfg Config) *Renderer {
 	if cfg.CellWidth == 0 {
 		cfg.CellWidth = cfg.FontSize * 0.62
@@ -198,10 +197,26 @@ func NewRenderer(w io.Writer, cfg Config) *Renderer {
 	if cfg.CellHeight == 0 {
 		cfg.CellHeight = cfg.FontSize * 1.25
 	}
-	if cfg.FontFamily == "" {
-		cfg.FontFamily = DefaultFontFamily
-	}
+	cfg.FontFamily = fontFamilyWithFallback(cfg.FontFamily)
 	return newRenderer(w, cfg, NewPalette(cfg.Theme, cfg.Colors))
+}
+
+// fontFamilyWithFallback guarantees the SVG font stack ends in the default
+// monospace fallbacks. The SVG is viewed on machines that rarely have the
+// recording terminal's font installed (GitHub READMEs, docs sites), and
+// without fallbacks those viewers get a browser-default proportional font
+// that breaks the grid alignment.
+func fontFamilyWithFallback(family string) string {
+	family = strings.TrimSpace(family)
+	if family == "" {
+		return DefaultFontFamily
+	}
+	// A stack ending in a generic monospace family (ours or the user's own)
+	// already has a safety net; don't append a duplicate tail.
+	if strings.HasSuffix(family, "monospace") {
+		return family
+	}
+	return family + ", " + DefaultFontFamily
 }
 
 func newRenderer(w io.Writer, cfg Config, pal Palette) *Renderer {
@@ -223,7 +238,7 @@ func newRenderer(w io.Writer, cfg Config, pal Palette) *Renderer {
 		loop:       cfg.Loop,
 	}
 	if cfg.Loop && cfg.TotalDuration > 0 {
-		r.period = cfg.TotalDuration + loopEndHold
+		r.period = cfg.TotalDuration + r.endHold()
 	}
 	return r
 }
@@ -327,7 +342,7 @@ func (r *Renderer) WriteFinalFrame(frame terminal.Frame, begin time.Duration) er
 	// from the final frame time. Set before updateRows so the non-final reveals it
 	// emits use the same period as the final reveals below.
 	if r.period <= 0 {
-		r.period = begin + loopEndHold
+		r.period = begin + r.endHold()
 	}
 	if err := r.updateRows(frame, begin); err != nil {
 		return err
@@ -345,18 +360,18 @@ func (r *Renderer) End() error {
 		return nil
 	}
 	r.closed = true
-	if _, err := io.WriteString(r.w, "</g>"+r.nl); err != nil {
+	if _, err := io.WriteString(r.w, "</g>"); err != nil {
 		return err
 	}
 	// Flush the classes promoted for frequently repeated non-palette colors. CSS
 	// applies regardless of element order, so this trailing <style> styles the
 	// class references already emitted above.
 	if r.dynStyle.Len() > 0 {
-		if _, err := io.WriteString(r.w, "<style>"+r.dynStyle.String()+"</style>"+r.nl); err != nil {
+		if _, err := io.WriteString(r.w, "<style>"+r.dynStyle.String()+"</style>"); err != nil {
 			return err
 		}
 	}
-	_, err := io.WriteString(r.w, "</svg>"+r.nl)
+	_, err := io.WriteString(r.w, "</svg>")
 	return err
 }
 
@@ -395,28 +410,32 @@ func (r *Renderer) emitRow(row int, cells []terminal.Cell, begin time.Duration, 
 	if !final && end <= begin {
 		return nil
 	}
+	// A row whose cells all show the default background with no glyphs (and no
+	// cursor) renders as nothing: the document background rect already paints
+	// it, and reveal intervals never overlap, so the previous content of this
+	// row is hidden by its own animation ending rather than by a cover rect.
+	if !r.rowHasContent(row, cells) {
+		return nil
+	}
 
 	// Rows start hidden (opacity 0); an animation reveals them for their interval.
 	// opacity 0/1 renders identically to visibility hidden/visible here but the
 	// attribute name and values are shorter.
-	if _, err := io.WriteString(r.w, `<g opacity="0">`+r.nl); err != nil {
+	if _, err := io.WriteString(r.w, `<g opacity="0">`); err != nil {
 		return err
 	}
 	if !r.loop {
 		// Play once: reveal at the absolute time and freeze the final state.
 		if final {
-			if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" fill="freeze"/>`+r.nl, formatTime(begin)); err != nil {
+			if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" fill="freeze"/>`, formatTime(begin)); err != nil {
 				return err
 			}
 		} else {
-			if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" dur="%s"/>`+r.nl, formatTime(begin), formatTime(end-begin)); err != nil {
+			if _, err := fmt.Fprintf(r.w, `<set attributeName="opacity" to="1" begin="%s" dur="%s"/>`, formatTime(begin), formatTime(end-begin)); err != nil {
 				return err
 			}
 		}
 	} else if err := r.emitLoopReveal(begin, end, final); err != nil {
-		return err
-	}
-	if err := r.emitRowBackground(row); err != nil {
 		return err
 	}
 	if err := r.emitBackgrounds(row, cells); err != nil {
@@ -428,7 +447,7 @@ func (r *Renderer) emitRow(row int, cells []terminal.Cell, begin time.Duration, 
 	if err := r.emitCursor(row, cells); err != nil {
 		return err
 	}
-	_, err := io.WriteString(r.w, "</g>"+r.nl)
+	_, err := io.WriteString(r.w, "</g>")
 	return err
 }
 
@@ -443,7 +462,7 @@ func (r *Renderer) emitRow(row int, cells []terminal.Cell, begin time.Duration, 
 func (r *Renderer) emitLoopReveal(begin, end time.Duration, final bool) error {
 	period := r.period
 	if period <= 0 {
-		period = loopEndHold
+		period = r.endHold()
 	}
 	if final {
 		end = period
@@ -471,7 +490,7 @@ func (r *Renderer) emitLoopReveal(begin, end time.Duration, final bool) error {
 		keyTimes = "0;" + formatFraction(begin, period) + ";" + formatFraction(end, period)
 	}
 	_, err := fmt.Fprintf(r.w,
-		`<animate attributeName="opacity" calcMode="discrete" dur="%s" repeatCount="indefinite" values="%s" keyTimes="%s"/>`+r.nl,
+		`<animate attributeName="opacity" calcMode="discrete" dur="%s" repeatCount="indefinite" values="%s" keyTimes="%s"/>`,
 		formatTime(period), values, keyTimes)
 	return err
 }
@@ -525,14 +544,25 @@ func (r *Renderer) writeRect(x, y, w, h int, fill string) error {
 	if _, err := io.WriteString(r.w, fill); err != nil {
 		return err
 	}
-	_, err := io.WriteString(r.w, `/>`+r.nl)
+	_, err := io.WriteString(r.w, `/>`)
 	return err
 }
 
-func (r *Renderer) emitRowBackground(row int) error {
-	x := r.gridX(0)
-	y := r.gridY(row)
-	return r.writeRect(x, y, r.gridX(r.cfg.Cols)-x, r.gridY(row+1)-y, r.fillToken(r.palette.background))
+// rowHasContent reports whether emitting this row would paint anything: a
+// visible glyph, a non-default cell background, or the cursor.
+func (r *Renderer) rowHasContent(row int, cells []terminal.Cell) bool {
+	if r.cursorVis && r.cursorY == row && r.cursorX >= 0 && r.cursorX < len(cells) {
+		return true
+	}
+	for i := range cells {
+		if textCellVisible(cells[i]) {
+			return true
+		}
+		if _, bg := r.colors(cells[i].Style); bg != r.palette.background {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Renderer) emitBackgrounds(row int, cells []terminal.Cell) error {
@@ -559,6 +589,15 @@ func (r *Renderer) emitBackgrounds(row int, cells []terminal.Cell) error {
 	return nil
 }
 
+// textGapMax is the longest run of invisible cells (spaces, hidden cells, wide
+// continuations) bridged inside one text run. Gap cells contribute nothing to
+// the output — every glyph carries its own x position, so the run simply
+// continues at the next visible cell's x. (Emitting space glyphs instead would
+// break in WebKit, which collapses them despite xml:space="preserve" and then
+// mis-assigns the x list.) Splitting costs a new <text> element (~35 bytes),
+// so bridging is always cheaper; the cap just keeps runs local.
+const textGapMax = 6
+
 func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 	for col := 0; col < len(cells); {
 		for col < len(cells) && !textCellVisible(cells[col]) {
@@ -569,15 +608,42 @@ func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 		}
 		start := col
 		key := r.textKey(cells[col].Style)
-		for col < len(cells) && textCellVisible(cells[col]) && r.textKey(cells[col].Style) == key {
-			col++
+		end := col + 1
+		col++
+		for col < len(cells) {
+			if textCellVisible(cells[col]) {
+				if r.textKey(cells[col].Style) != key {
+					break
+				}
+				col++
+				end = col
+				continue
+			}
+			// Bridge a short invisible gap when the same style resumes after
+			// it. Decorated styles cannot bridge: the injected spaces would
+			// paint the underline/strikethrough across cells that had none.
+			if key.decorated() {
+				break
+			}
+			gap := col + 1
+			for gap < len(cells) && !textCellVisible(cells[gap]) {
+				gap++
+			}
+			if gap-col > textGapMax || gap >= len(cells) || r.textKey(cells[gap].Style) != key {
+				break
+			}
+			col = gap
 		}
-		end := col
 		y := r.baselineY(row)
 		if _, err := io.WriteString(r.w, `<text x="`); err != nil {
 			return err
 		}
+		// One x entry per emitted glyph: gap cells are skipped in both the x
+		// list and the glyph string, keeping them aligned one-to-one.
 		for cell := start; cell < end; cell++ {
+			if !textCellVisible(cells[cell]) {
+				continue
+			}
 			if cell > start {
 				if _, err := io.WriteString(r.w, ` `); err != nil {
 					return err
@@ -634,7 +700,7 @@ func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 		if err := r.writeEscapedCells(cells[start:end]); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(r.w, "</text>"+r.nl); err != nil {
+		if _, err := io.WriteString(r.w, "</text>"); err != nil {
 			return err
 		}
 	}
@@ -678,7 +744,7 @@ func (r *Renderer) emitCursor(row int, cells []terminal.Cell) error {
 	if err := r.writeEscapedCells(cells[r.cursorX : r.cursorX+1]); err != nil {
 		return err
 	}
-	_, err := io.WriteString(r.w, "</text>"+r.nl)
+	_, err := io.WriteString(r.w, "</text>")
 	return err
 }
 
@@ -695,7 +761,22 @@ type textKey struct {
 
 func (r *Renderer) textKey(style terminal.Style) textKey {
 	fg, _ := r.colors(style)
-	return textKey{fg: fg, bold: style.Bold, dim: style.Dim, italic: style.Italic, underline: style.Underline, blink: style.Blink, strikethrough: style.Strikethrough, overline: style.Overline}
+	return textKey{
+		fg:            fg,
+		bold:          style.Has(terminal.AttrBold),
+		dim:           style.Has(terminal.AttrDim),
+		italic:        style.Has(terminal.AttrItalic),
+		underline:     style.Has(terminal.AttrUnderline),
+		blink:         style.Has(terminal.AttrBlink),
+		strikethrough: style.Has(terminal.AttrStrikethrough),
+		overline:      style.Has(terminal.AttrOverline),
+	}
+}
+
+// decorated reports whether the style paints marks across the full cell width
+// (so gap cells bridged into a run would visibly change).
+func (k textKey) decorated() bool {
+	return k.underline || k.strikethrough || k.overline
 }
 
 func (k textKey) textDecoration() string {
@@ -737,13 +818,15 @@ func cellsEqual(a, b []terminal.Cell) bool {
 }
 
 func textCellVisible(cell terminal.Cell) bool {
-	return !cell.WideContinuation && !cell.Style.Hidden && cell.Rune() != ' '
+	return !cell.WideContinuation() && !cell.Style.Has(terminal.AttrHidden) && cell.Rune() != ' '
 }
 
 func (r *Renderer) writeEscapedCells(cells []terminal.Cell) error {
 	for i := range cells {
 		cell := cells[i]
-		if cell.WideContinuation {
+		// Gap cells bridged into a merged run emit nothing; their x-list
+		// entries are skipped too, so glyphs and positions stay one-to-one.
+		if !textCellVisible(cell) {
 			continue
 		}
 		// Escape the rune directly instead of cell.Text(), which would allocate
@@ -852,10 +935,6 @@ func lightPalette() Palette {
 }
 
 func RGB(r, g, b uint8) string {
-	return rgb(r, g, b)
-}
-
-func rgb(r, g, b uint8) string {
 	const hex = "0123456789abcdef"
 	out := []byte{'#', 0, 0, 0, 0, 0, 0}
 	out[1] = hex[r>>4]

@@ -43,14 +43,74 @@ func TestRendererPositionsRunsAfterSpaces(t *testing.T) {
 	}
 
 	out := buf.String()
-	if strings.Contains(out, ">A   B</text>") {
-		t.Fatalf("renderer emitted spaced cells as one text run:\n%s", out)
+	// A short space gap is bridged into one run. Gap cells appear in neither
+	// the x list nor the glyph string (space glyphs would be collapsed by
+	// WebKit's whitespace handling and shift every later glyph), so B is
+	// pinned directly to cell 4's x.
+	if !strings.Contains(out, `<text x="0 40" y="10">AB</text>`) {
+		t.Fatalf("spaced cells not merged into one pinned run:\n%s", out)
 	}
+}
+
+func TestRendererSplitsRunsAtLongGaps(t *testing.T) {
+	var buf bytes.Buffer
+	renderer := NewRenderer(&buf, Config{
+		Cols:       textGapMax + 3,
+		Rows:       1,
+		Theme:      "dark",
+		FontSize:   10,
+		CellWidth:  10,
+		CellHeight: 12,
+	})
+
+	cells := make([]terminal.Cell, textGapMax+3)
+	for i := range cells {
+		cells[i] = terminal.BlankCell()
+	}
+	cells[0].Ch = 'A'
+	cells[len(cells)-1].Ch = 'B'
+	frame := terminal.Frame{Cols: len(cells), Rows: 1, Data: cells}
+
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.WriteFinalFrame(frame, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
 	if !strings.Contains(out, `<text x="0" y="10">A</text>`) {
-		t.Fatalf("missing A at cell 0:\n%s", out)
+		t.Fatalf("run should split at a gap wider than textGapMax:\n%s", out)
 	}
-	if !strings.Contains(out, `<text x="40" y="10">B</text>`) {
-		t.Fatalf("missing B at cell 4:\n%s", out)
+}
+
+func TestRendererDoesNotBridgeDecoratedRuns(t *testing.T) {
+	var buf bytes.Buffer
+	renderer := NewRenderer(&buf, Config{Cols: 3, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
+	underlined := terminal.Style{Attrs: terminal.AttrUnderline}
+	frame := terminal.Frame{Cols: 3, Rows: 1, Data: []terminal.Cell{
+		{Ch: 'A', Style: underlined},
+		terminal.BlankCell(),
+		{Ch: 'B', Style: underlined},
+	}}
+
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.WriteFinalFrame(frame, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	// Bridging would paint the underline across the undecorated space.
+	if !strings.Contains(out, `>A</text>`) || !strings.Contains(out, `>B</text>`) {
+		t.Fatalf("decorated cells must not bridge across the plain gap:\n%s", out)
 	}
 }
 
@@ -88,6 +148,25 @@ func TestRendererPinsEveryCellInTextRun(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, `<text x="0 10 20" y="10">╭─╮</text>`) {
 		t.Fatalf("text run was not pinned to every cell:\n%s", out)
+	}
+}
+
+func TestRendererAppendsFontFallbacks(t *testing.T) {
+	var buf bytes.Buffer
+	renderer := NewRenderer(&buf, Config{Cols: 1, Rows: 1, Theme: "dark", FontSize: 10, FontFamily: "'My Terminal Font'"})
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "My Terminal Font") || !strings.Contains(out, "monospace") {
+		t.Fatalf("custom font should keep the default fallback stack:\n%s", out)
+	}
+	// A stack already ending in a generic family is left alone.
+	if got := fontFamilyWithFallback("Menlo, monospace"); got != "Menlo, monospace" {
+		t.Fatalf("fontFamilyWithFallback double-appended: %q", got)
 	}
 }
 
@@ -155,11 +234,13 @@ func TestRendererFinalBlankRowCoversPreviousText(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, `<set attributeName="opacity" to="1" begin="1s" fill="freeze"/>`) {
-		t.Fatalf("missing final blank row group:\n%s", out)
+	// The earlier text hides because its own reveal interval ends at 1s; the
+	// blank final state needs no cover rect (and emits no group at all).
+	if !strings.Contains(out, `<set attributeName="opacity" to="1" begin="0s" dur="1s"/>`) {
+		t.Fatalf("previous text reveal should end when the row goes blank:\n%s", out)
 	}
-	if !strings.Contains(out, `<rect x="0" y="0" width="30" height="12" class="bg"/>`) {
-		t.Fatalf("missing final row background cover:\n%s", out)
+	if strings.Contains(out, `class="bg"/>`) {
+		t.Fatalf("blank rows should not emit background cover rects:\n%s", out)
 	}
 }
 
@@ -187,13 +268,16 @@ func TestRendererEmitsNonFinalBlankRows(t *testing.T) {
 	}
 
 	out := buf.String()
-	blankGroup := `<set attributeName="opacity" to="1" begin="1s" dur="1s"/>`
-	rowClear := `<rect x="0" y="0" width="40" height="12" class="bg"/>`
-	if !strings.Contains(out, blankGroup) {
-		t.Fatalf("missing non-final blank row interval:\n%s", out)
+	// The menu text is revealed for exactly [0s,1s); the blank state emits no
+	// group of its own, and the final "done" text starts at 2s.
+	if !strings.Contains(out, `<set attributeName="opacity" to="1" begin="0s" dur="1s"/>`) {
+		t.Fatalf("menu reveal should end when the row goes blank:\n%s", out)
 	}
-	if strings.Count(out, rowClear) < 3 {
-		t.Fatalf("expected row clear for menu, blank, and final rows; found %d:\n%s", strings.Count(out, rowClear), out)
+	if !strings.Contains(out, `<set attributeName="opacity" to="1" begin="2s" fill="freeze"/>`) {
+		t.Fatalf("missing final text reveal:\n%s", out)
+	}
+	if got := strings.Count(out, `<g opacity="0">`); got != 2 {
+		t.Fatalf("expected 2 row groups (menu, done) with none for the blank state, got %d:\n%s", got, out)
 	}
 }
 
@@ -267,8 +351,8 @@ func TestRendererKeepsRareColorInline(t *testing.T) {
 func TestRendererClearsRowBeforeInverseHighlight(t *testing.T) {
 	var buf bytes.Buffer
 	renderer := NewRenderer(&buf, Config{Cols: 2, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
-	frame1 := terminal.Frame{Cols: 2, Rows: 1, Data: []terminal.Cell{{Ch: 'A', Style: terminal.Style{Inverse: true}}, {Ch: 'B'}}}
-	frame2 := terminal.Frame{Cols: 2, Rows: 1, Data: []terminal.Cell{{Ch: 'A'}, {Ch: 'B', Style: terminal.Style{Inverse: true}}}}
+	frame1 := terminal.Frame{Cols: 2, Rows: 1, Data: []terminal.Cell{{Ch: 'A', Style: terminal.Style{Attrs: terminal.AttrInverse}}, {Ch: 'B'}}}
+	frame2 := terminal.Frame{Cols: 2, Rows: 1, Data: []terminal.Cell{{Ch: 'A'}, {Ch: 'B', Style: terminal.Style{Attrs: terminal.AttrInverse}}}}
 	frame3 := terminal.Frame{Cols: 2, Rows: 1, Data: []terminal.Cell{{Ch: 'A'}, {Ch: 'B'}}}
 
 	if err := renderer.Begin(); err != nil {
@@ -288,12 +372,16 @@ func TestRendererClearsRowBeforeInverseHighlight(t *testing.T) {
 	}
 
 	out := buf.String()
-	rowClear := `<rect x="0" y="0" width="20" height="12" class="bg"/>`
-	if strings.Count(out, rowClear) < 3 {
-		t.Fatalf("expected every emitted row to clear first; found %d clears:\n%s", strings.Count(out, rowClear), out)
+	// Each highlight state is revealed only for its own interval; no cover
+	// rects are needed because the intervals do not overlap.
+	if !strings.Contains(out, `<rect x="0" y="0" width="10" height="12"/>`) {
+		t.Fatalf("missing initial inverse highlight:\n%s", out)
 	}
 	if !strings.Contains(out, `<rect x="10" y="0" width="10" height="12"/>`) {
 		t.Fatalf("missing moved inverse highlight:\n%s", out)
+	}
+	if strings.Contains(out, `class="bg"/>`) {
+		t.Fatalf("row cover rects should no longer be emitted:\n%s", out)
 	}
 }
 
@@ -302,8 +390,8 @@ func TestRendererEmitsCombiningAndSkipsWideContinuation(t *testing.T) {
 	renderer := NewRenderer(&buf, Config{Cols: 4, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
 	frame := terminal.Frame{Cols: 4, Rows: 1, Data: []terminal.Cell{
 		{Ch: 'e', Combining: "\u0301"},
-		{Ch: '你', Wide: true},
-		{Ch: ' ', WideContinuation: true},
+		{Ch: '你', Style: terminal.Style{Attrs: terminal.AttrWide}},
+		{Ch: ' ', Style: terminal.Style{Attrs: terminal.AttrWideContinuation}},
 		{Ch: 'x'},
 	}}
 
@@ -329,7 +417,7 @@ func TestRendererEmitsCombiningAndSkipsWideContinuation(t *testing.T) {
 func TestRendererEmitsRicherTextAttributes(t *testing.T) {
 	var buf bytes.Buffer
 	renderer := NewRenderer(&buf, Config{Cols: 1, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
-	frame := terminal.Frame{Cols: 1, Rows: 1, Data: []terminal.Cell{{Ch: 'A', Style: terminal.Style{Italic: true, Underline: true, Strikethrough: true, Overline: true}}}}
+	frame := terminal.Frame{Cols: 1, Rows: 1, Data: []terminal.Cell{{Ch: 'A', Style: terminal.Style{Attrs: terminal.AttrItalic | terminal.AttrUnderline | terminal.AttrStrikethrough | terminal.AttrOverline}}}}
 
 	if err := renderer.Begin(); err != nil {
 		t.Fatal(err)

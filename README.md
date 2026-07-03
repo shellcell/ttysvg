@@ -58,22 +58,31 @@ ttysvg -o demo.svg -- go test ./...
 -gz                 write a gzip-compressed .svgz file (also enabled by a .svgz output path)
 -size COLSxROWS     recording size; omit either side to auto-fit the terminal (100x, x30, 100x30)
 -fps n              target frames per second; sets the capture rate (overrides -frame/-idle); e.g. 30
--frame dur          minimum time between SVG snapshots; default 33ms (30fps)
--idle dur           capture after output silence; default 33ms; 0 disables
--font-family s      SVG CSS font-family; defaults to detected terminal font plus fallbacks
--font-size px       SVG output font size; does not change the live terminal font; defaults to detected size with -query-terminal, otherwise 14
+-frame dur          minimum time between SVG snapshots; default 25ms (40fps)
+-idle dur           capture after output silence; default 25ms; 0 disables
+-font-family s      SVG CSS font-family; defaults to monospace fallbacks, or the font reported by -query-terminal
+-font-size px       SVG output font size; does not change the live terminal font; default 14, or the size reported by -query-terminal
 -cell-width px      SVG cell width; defaults to font-size*0.62
 -cell-height px     SVG cell height; defaults to font-size*1.25
 -theme name         auto, dark, or light; default auto
 -bg color           terminal background color during recording, e.g. #0d1117; also used as SVG background
 -padding px         SVG background frame around the terminal grid; default 0
 -no-loop            play once and freeze the final screen instead of looping
--query-terminal     query/identify the terminal for colors, theme, and font before recording; off by default
+-hold dur           how long the final screen is held before the loop repeats; default 2s
+-cast path          convert an asciinema .cast file (v2/v3) to SVG instead of recording
+-query-terminal     query the terminal for colors, theme, and font before recording; off by default
 -no-clear           do not clear the terminal before recording starts
--autostart          in pane mode, begin recording immediately instead of waiting for Ctrl-R
+-autostart          in pane mode, begin recording immediately instead of waiting for Ctrl-\
+
 -headless           record the requested size directly with no interactive pane; for scripting and CI
 -version            print version and exit
 -q                  suppress progress and summary
+```
+
+`-o -` streams the SVG to stdout (stdout must be redirected; the live session moves to stderr):
+
+```sh
+ttysvg -o - -- make test > out.svg
 ```
 
 ### Frame rate
@@ -94,17 +103,28 @@ ttysvg -fps 15 -o small.svg      # 15 fps, choppier but smaller
 
 Roughly, raw SVG size scales with the frame rate, but the gzipped size grows far more slowly (the repeated markup compresses well), so serving the SVG gzip-encoded keeps even 60 fps recordings small.
 
-Terminal identification is off by default to minimize startup latency. Pass `-query-terminal` to detect terminal colors/theme/font from supported terminal config files and live terminal color queries.
+Terminal identification is off by default to minimize startup latency. Pass `-query-terminal` to detect the terminal's colors, theme, and font with live OSC terminal queries (OSC 10/11 for foreground/background, OSC 4 for the ANSI palette, OSC 50 for the font where supported). The query ends as soon as the terminal answers, so it usually adds only a few milliseconds.
 
-When `-size` is set (including a width- or height-only form like `100x` or `x30`), `ttysvg` compares the requested recording size with the current terminal. If it is the same size, recording runs directly in the terminal as usual. If it is larger, recording does not start and `ttysvg` asks you to resize the terminal first. If it is smaller, `ttysvg` starts the child session in a visible pane so you can prepare before recording. Use the pane buttons or keyboard shortcuts: `Ctrl-R` starts/resumes, `Ctrl-P` pauses/resumes, and `Ctrl-Q` stops. The prepared screen and each resume screen are captured as static SVG frames, then later output animates from those states. Paused output is live and interactive but is not recorded.
+When `-size` is set (including a width- or height-only form like `100x` or `x30`), `ttysvg` compares the requested recording size with the current terminal. If it is the same size, recording runs directly in the terminal as usual. If it is larger, recording does not start and `ttysvg` asks you to resize the terminal first. If it is smaller, `ttysvg` starts the child session in a visible pane so you can prepare before recording. Use the pane buttons or keyboard shortcuts: `Ctrl-\` starts, pauses, and resumes (one toggle), and `Ctrl-]` stops — the keys are always shown in the pane status bar. These two are the least-contended control keys: `Ctrl-\` otherwise only means SIGQUIT (and is also asciinema's pause key), and `Ctrl-]` is telnet's own escape key; neither is used by shells, readline, tmux, or fzf. They are intercepted only while the pane is active — direct-mode recording filters nothing, so recording telnet itself still works there, and the mouse buttons always remain available. The prepared screen and each resume screen are captured as static SVG frames, then later output animates from those states. Paused output is live and interactive but is not recorded.
 
-When pane mode is active, `-padding` is also previewed inside the pane border using whole terminal cells, approximated from the configured SVG cell size. Pass `-autostart` to skip the `Ctrl-R` wait and begin recording as soon as the pane opens; `Ctrl-P` and `Ctrl-Q` still pause and stop. To skip the pane entirely and record the requested size straight away, even on an interactive terminal, use `-headless`.
+When pane mode is active, `-padding` is also previewed inside the pane border using whole terminal cells, approximated from the configured SVG cell size. Pass `-autostart` to skip the `Ctrl-\` wait and begin recording as soon as the pane opens; `Ctrl-\` and `Ctrl-]` still pause and stop. To skip the pane entirely and record the requested size straight away, even on an interactive terminal, use `-headless`.
 
-The recorded SVG plays in an infinite loop by default: after the final screen is held briefly, the animation restarts from the beginning. Pass `-no-loop` to play once and freeze on the final screen instead.
+The recorded SVG plays in an infinite loop by default: after the final screen is held briefly (2s, tune with `-hold`), the animation restarts from the beginning. Pass `-no-loop` to play once and freeze on the final screen instead.
+
+## Converting asciinema recordings
+
+`-cast` renders an existing [asciinema](https://asciinema.org/) recording (v2 or v3 `.cast`) through the same SVG pipeline, without recording anything:
+
+```sh
+ttysvg -cast demo.cast -o demo.svg
+ttysvg -cast demo.cast -size 100x -o demo.svg   # override the header size
+```
+
+The terminal size comes from the cast header unless `-size` is given, and the header's `idle_time_limit` is respected.
 
 ## Continuous Integration
 
-`ttysvg` runs without an interactive terminal, so it works in GitLab, GitHub Actions, and other CI runners. When stdout is not a TTY it records directly (no pane, no `Ctrl-R`) and streams the child output to the job log as usual. Two rules apply in CI:
+`ttysvg` runs without an interactive terminal, so it works in GitLab, GitHub Actions, and other CI runners. When stdout is not a TTY it records directly (no pane, no `Ctrl-\`) and streams the child output to the job log as usual. Two rules apply in CI:
 
 - You must pass a command after `--`; with no command and a non-interactive stdin, `ttysvg` exits with an error instead of launching a shell.
 - Pass `-size` to pin the recording dimensions, since there is no terminal to measure (otherwise it falls back to 80x24).

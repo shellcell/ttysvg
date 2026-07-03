@@ -15,6 +15,12 @@ func (t *liveTerminal) UpdateRecordingState(state recordingState, elapsed time.D
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// The recording-clock ticker outlives the pane (it stops only when the
+	// control is closed after rendering). Once the terminal is restored the
+	// status bar must not be repainted onto the primary screen.
+	if t.restored {
+		return
+	}
 	drawLiveControls(t.stdout, t.cfg, t.layout, state, elapsed)
 }
 
@@ -149,13 +155,13 @@ func controlMessage(cfg Config, state recordingState, elapsed time.Duration) str
 func controlKeyHint(state recordingState) string {
 	switch state {
 	case recordingActive:
-		return "Ctrl-P pause Ctrl-Q stop"
+		return `Ctrl-\ pause Ctrl-] stop`
 	case recordingPaused:
-		return "Ctrl-R resume Ctrl-Q stop"
+		return `Ctrl-\ resume Ctrl-] stop`
 	case recordingStopped:
 		return ""
 	default:
-		return "Ctrl-R start Ctrl-Q stop"
+		return `Ctrl-\ start Ctrl-] stop`
 	}
 }
 
@@ -166,13 +172,13 @@ func sideControlLines(cfg Config, state recordingState, elapsed time.Duration) [
 	}
 	switch state {
 	case recordingActive:
-		lines = append(lines, "REC", formatRecordClock(elapsed), "", "^P pause", "^Q stop")
+		lines = append(lines, "REC", formatRecordClock(elapsed), "", `^\ pause`, `^] stop`)
 	case recordingPaused:
-		lines = append(lines, "PAUSED", formatRecordClock(elapsed), "", "^R resume", "^Q stop")
+		lines = append(lines, "PAUSED", formatRecordClock(elapsed), "", `^\ resume`, `^] stop`)
 	case recordingStopped:
 		lines = append(lines, "STOP")
 	default:
-		lines = append(lines, "PREP", "", "^R start", "^Q stop")
+		lines = append(lines, "PREP", "", `^\ start`, `^] stop`)
 	}
 	return lines
 }

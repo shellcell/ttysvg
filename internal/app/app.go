@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/rabarbra/ttysvg/internal/eventlog"
@@ -49,6 +51,12 @@ type Config struct {
 	// NoLoop disables the default infinite loop so the SVG plays once and freezes
 	// on the final screen.
 	NoLoop bool
+	// EndHold is how long the final screen is held before the loop repeats.
+	// Zero means the built-in default (2s).
+	EndHold time.Duration
+	// CastPath converts an existing asciinema .cast recording instead of
+	// recording a live session.
+	CastPath string
 	// Gzip writes a gzip-compressed .svgz file instead of a plain .svg. It is also
 	// enabled automatically when the output path ends in .svgz.
 	Gzip bool
@@ -56,6 +64,9 @@ type Config struct {
 
 func Run(ctx context.Context, cfg Config) (int, error) {
 	themeAuto := cfg.Theme == "" || cfg.Theme == "auto"
+	if cfg.CastPath != "" {
+		return runCast(ctx, cfg, themeAuto)
+	}
 	if err := cfg.setDefaults(); err != nil {
 		return 2, err
 	}
@@ -66,12 +77,22 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if cfg.Gzip {
+	toStdout := outputPath == "-"
+	if cfg.Gzip && !toStdout {
 		outputPath = svgzPath(outputPath)
 	}
 	cfg.OutputPath = outputPath
+	// With -o - the SVG owns stdout, so the live child output moves to stderr
+	// (in CI that keeps the log visible; in a terminal with stdout redirected
+	// the session stays interactive).
+	liveOut := os.Stdout
+	if toStdout {
+		liveOut = os.Stderr
+	}
 	if cfg.QueryTerminal {
-		queried := queryTerminalStyle(os.Stdin, os.Stdout, 120*time.Millisecond)
+		// The DA1 sentinel ends the read as soon as all replies are in, so the
+		// timeout is only a ceiling for unresponsive terminals.
+		queried := queryTerminalStyle(os.Stdin, os.Stdout, 500*time.Millisecond)
 		if !queried.empty() {
 			merged := terminalStyle{Colors: cfg.Colors}
 			merged.merge(queried)
@@ -79,17 +100,26 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 			if themeAuto && queried.Theme != "" {
 				cfg.Theme = queried.Theme
 			}
+			if cfg.FontFamily == "" && queried.FontFamily != "" {
+				cfg.FontFamily = cssFontFamilyWithFallback(queried.FontFamily)
+			}
+			if cfg.FontSize == 0 && queried.FontSize > 0 {
+				cfg.FontSize = queried.FontSize
+			}
 		}
+	}
+	if cfg.FontSize == 0 {
+		cfg.FontSize = 14
 	}
 	if err := cfg.applyBackgroundOverride(); err != nil {
 		return 2, err
 	}
-	liveTerminal, err := setupLiveTerminal(os.Stdout, cfg)
+	liveTerminal, err := setupLiveTerminal(liveOut, cfg)
 	if err != nil {
 		return 2, err
 	}
 	if cfg.ClearTerminal && !liveTerminal.Decorated() {
-		clearInteractiveTerminal(os.Stdout)
+		clearInteractiveTerminal(liveOut)
 	}
 	liveTerminal.Activate()
 	defer liveTerminal.Restore()
@@ -105,14 +135,12 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 	if !cfg.Quiet && !cfg.ClearTerminal && !liveTerminal.Decorated() {
 		fmt.Fprintf(os.Stderr, "ttysvg: recording to %s; type exit to stop\n", cfg.OutputPath)
 	}
-	runCtx := ctx
-	var cancel context.CancelFunc
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var control *recordingControl
 	sink := ptyrec.Sink(writer)
 	var input io.Reader
 	if liveTerminal.Decorated() {
-		runCtx, cancel = context.WithCancel(ctx)
-		defer cancel()
 		control = newRecordingControl(writer, liveTerminal, cancel)
 		defer control.Close()
 		sink = control
@@ -121,6 +149,30 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 			control.StartOrResume()
 		}
 	}
+
+	// A termination signal must not kill ttysvg mid-session: that would leave
+	// the terminal in raw mode (and pane mode in the alternate screen) and lose
+	// the recording. Treat the first signal as "stop recording and render what
+	// we have"; after that, signals regain their default behavior.
+	var signalStop atomic.Bool
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer func() {
+		signal.Stop(sigCh)
+		close(sigCh)
+	}()
+	go func() {
+		if sig := <-sigCh; sig == nil {
+			return // channel closed on normal shutdown
+		}
+		signalStop.Store(true)
+		signal.Stop(sigCh)
+		if control != nil {
+			control.Stop()
+		} else {
+			cancel()
+		}
+	}()
 	recorder := ptyrec.Recorder{
 		Command: cfg.Command,
 		Cols:    cfg.Cols,
@@ -134,7 +186,8 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 	recordStart := time.Now()
 	exitCode, recordErr := recorder.Run(runCtx, sink)
 	liveTerminal.Restore()
-	if control != nil && control.StopRequested() && recordErr != nil {
+	stopRequested := signalStop.Load() || (control != nil && control.StopRequested())
+	if stopRequested && recordErr != nil {
 		recordErr = nil
 		exitCode = 0
 	}
@@ -157,23 +210,25 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 		return exitCode, nil
 	}
 
-	stats, err := render(ctx, cfg, logPath)
+	// Looping needs the total recording length up front so each reveal can be
+	// timed as a fraction of the loop period; the writer tracked it as it wrote.
+	stats, err := render(ctx, cfg, logPath, writer.LastAt())
 	if err != nil {
 		return 1, err
 	}
 
 	if !cfg.Quiet {
+		target := cfg.OutputPath
+		if target == "-" {
+			target = "stdout"
+		}
 		fmt.Fprintf(os.Stderr, "ttysvg: wrote %s (%s, %d frames, %s recorded, %s total)\n",
-			cfg.OutputPath, formatBytes(stats.Size), stats.Frames, stats.Duration.Round(time.Millisecond), time.Since(recordStart).Round(time.Millisecond))
+			target, formatBytes(stats.Size), stats.Frames, stats.Duration.Round(time.Millisecond), time.Since(recordStart).Round(time.Millisecond))
 	}
 	return exitCode, nil
 }
 
 func (cfg *Config) setDefaults() error {
-	var detected terminalStyle
-	if cfg.QueryTerminal {
-		detected = detectTerminalStyle()
-	}
 	if cfg.OutputPath == "" {
 		cfg.OutputPath = "."
 	}
@@ -205,26 +260,11 @@ func (cfg *Config) setDefaults() error {
 	if cfg.IdleInterval < 0 {
 		return errors.New("-idle cannot be negative")
 	}
-	if cfg.FontFamily == "" && detected.FontFamily != "" {
-		cfg.FontFamily = cssFontFamilyWithFallback(detected.FontFamily)
-	}
-	if cfg.FontSize == 0 && detected.FontSize > 0 {
-		cfg.FontSize = detected.FontSize
-	}
-	if cfg.FontSize == 0 {
-		cfg.FontSize = 14
-	}
 	if cfg.FontSize < 0 {
 		return errors.New("-font-size must be positive")
 	}
 	if cfg.Theme == "" || cfg.Theme == "auto" {
-		cfg.Theme = detected.Theme
-		if cfg.Theme == "" {
-			cfg.Theme = "dark"
-		}
-	}
-	if colorsEmpty(cfg.Colors) && !colorsEmpty(detected.Colors) {
-		cfg.Colors = detected.Colors
+		cfg.Theme = "dark"
 	}
 	if cfg.CellWidth < 0 || cfg.CellHeight < 0 || cfg.Padding < 0 {
 		return errors.New("SVG dimensions cannot be negative")
@@ -253,31 +293,21 @@ type renderStats struct {
 	Size     int64
 }
 
-// scanRecordingDuration returns the timestamp of the last event in the log,
-// i.e. the recording length. It reads the framing and timestamps only (no
-// terminal emulation), so it is cheap relative to the render pass.
-func scanRecordingDuration(logPath string) (time.Duration, error) {
-	f, err := os.Open(logPath)
-	if err != nil {
-		return 0, fmt.Errorf("open event log: %w", err)
+// newEmulatorScreen builds a terminal emulator screen with terminfo loaded for
+// the current TERM (falling back to xterm-256color).
+func newEmulatorScreen(cols, rows int) *terminal.Screen {
+	screen := terminal.NewScreen(cols, rows)
+	termName := os.Getenv("TERM")
+	if termName == "" {
+		termName = "xterm-256color"
 	}
-	defer f.Close()
-	reader := eventlog.NewReader(f)
-	var last time.Duration
-	for {
-		record, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return 0, fmt.Errorf("scan event log: %w", err)
-		}
-		last = record.At
+	if info, ok := terminal.LoadTerminfo(termName); ok {
+		screen.SetTerminfo(info)
 	}
-	return last, nil
+	return screen
 }
 
-func render(ctx context.Context, cfg Config, logPath string) (renderStats, error) {
+func render(ctx context.Context, cfg Config, logPath string, totalDuration time.Duration) (renderStats, error) {
 	in, err := os.Open(logPath)
 	if err != nil {
 		return renderStats{}, fmt.Errorf("open event log: %w", err)
@@ -289,24 +319,14 @@ func render(ctx context.Context, cfg Config, logPath string) (renderStats, error
 	}
 	counter := &countingReader{r: in}
 
-	// Looping needs the total recording length up front so each reveal can be
-	// timed as a fraction of the loop period. A cheap timestamp-only scan of the
-	// event log (no terminal emulation) yields it before the render pass.
-	var totalDuration time.Duration
-	if !cfg.NoLoop {
-		totalDuration, err = scanRecordingDuration(logPath)
-		if err != nil {
-			return renderStats{}, err
-		}
-	}
-
 	out, err := createOutput(cfg.OutputPath)
 	if err != nil {
 		return renderStats{}, err
 	}
 	defer out.cleanup()
 
-	bufferedOut := bufio.NewWriterSize(out.file, 256*1024)
+	written := &countingWriter{w: out.file}
+	bufferedOut := bufio.NewWriterSize(written, 256*1024)
 	// Optionally compress the SVG stream into a .svgz. The renderer writes through
 	// the gzip writer, which writes compressed bytes into the buffered file.
 	var renderTarget io.Writer = bufferedOut
@@ -330,19 +350,13 @@ func render(ctx context.Context, cfg Config, logPath string) (renderStats, error
 		Padding:       cfg.Padding,
 		Loop:          !cfg.NoLoop,
 		TotalDuration: totalDuration,
+		EndHold:       cfg.EndHold,
 	})
 	if err := renderer.Begin(); err != nil {
 		return renderStats{}, err
 	}
 
-	screen := terminal.NewScreen(cfg.Cols, cfg.Rows)
-	termName := os.Getenv("TERM")
-	if termName == "" {
-		termName = "xterm-256color"
-	}
-	if info, ok := terminal.LoadTerminfo(termName); ok {
-		screen.SetTerminfo(info)
-	}
+	screen := newEmulatorScreen(cfg.Cols, cfg.Rows)
 	reader := eventlog.NewReader(counter)
 	progress := newProgressBar(logStat.Size(), os.Stderr, cfg.Quiet)
 	progress.Start()
@@ -367,11 +381,7 @@ func render(ctx context.Context, cfg Config, logPath string) (renderStats, error
 	if err := out.close(); err != nil {
 		return renderStats{}, err
 	}
-	outputStat, err := os.Stat(cfg.OutputPath)
-	if err != nil {
-		return renderStats{}, fmt.Errorf("stat output file: %w", err)
-	}
-	stats.Size = outputStat.Size()
+	stats.Size = written.n
 	return stats, nil
 }
 
@@ -442,6 +452,20 @@ func replay(ctx context.Context, reader *eventlog.Reader, screen *terminal.Scree
 			}
 		}
 
+		// Alternate-screen apps are captured at settled boundaries only (below,
+		// interval captures are skipped) to avoid mid-repaint tearing. But an
+		// animation whose repaint gaps hover just under the idle interval would
+		// then never produce a frame until it exits. Treat a gap of a quarter
+		// idle interval as a frame boundary too — bursts inside one repaint are
+		// far tighter than that — while frameInterval still caps the rate.
+		if dirty && idleInterval > 0 && screen.AlternateActive() &&
+			record.At-lastSnapshotAt >= frameInterval &&
+			record.At-lastEventAt >= idleInterval/4 {
+			if err := capture(lastEventAt); err != nil {
+				return renderStats{}, err
+			}
+		}
+
 		if screen.Write(record.Data) {
 			dirty = true
 		}
@@ -478,10 +502,14 @@ type outputFile struct {
 	file      *os.File
 	path      string
 	tempPath  string
+	stdout    bool
 	committed bool
 }
 
 func createOutput(path string) (*outputFile, error) {
+	if path == "-" {
+		return &outputFile{file: os.Stdout, path: path, stdout: true}, nil
+	}
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -495,11 +523,12 @@ func createOutput(path string) (*outputFile, error) {
 }
 
 func (f *outputFile) close() error {
+	if f.stdout {
+		f.committed = true
+		return nil
+	}
 	if err := f.file.Close(); err != nil {
 		return fmt.Errorf("close output file: %w", err)
-	}
-	if runtime.GOOS == "windows" {
-		_ = os.Remove(f.path)
 	}
 	if err := os.Rename(f.tempPath, f.path); err != nil {
 		return fmt.Errorf("move output into place: %w", err)
@@ -509,7 +538,7 @@ func (f *outputFile) close() error {
 }
 
 func (f *outputFile) cleanup() {
-	if f == nil || f.committed {
+	if f == nil || f.committed || f.stdout {
 		return
 	}
 	_ = f.file.Close()
@@ -524,5 +553,16 @@ type countingReader struct {
 func (r *countingReader) Read(p []byte) (int, error) {
 	n, err := r.r.Read(p)
 	r.n += int64(n)
+	return n, err
+}
+
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
+	w.n += int64(n)
 	return n, err
 }

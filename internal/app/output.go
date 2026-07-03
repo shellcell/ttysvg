@@ -31,6 +31,15 @@ func svgzPath(path string) string {
 }
 
 func prepareOutputPath(request string, stdin *os.File, stderr io.Writer) (string, error) {
+	// "-" streams the SVG to stdout; the child's live output moves to stderr.
+	// Refuse when stdout is an interactive terminal, where the SVG would be
+	// dumped into the session being recorded.
+	if request == "-" {
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			return "", fmt.Errorf("-o - writes the SVG to stdout and needs it redirected, e.g. ttysvg -o - -- make test > out.svg")
+		}
+		return "-", nil
+	}
 	path, err := resolveOutputPath(request)
 	if err == nil {
 		err = ensureWritableTarget(path)
@@ -48,9 +57,6 @@ func prepareOutputPath(request string, stdin *os.File, stderr io.Writer) (string
 func resolveOutputPath(request string) (string, error) {
 	if request == "" {
 		request = "."
-	}
-	if request == "-" {
-		return "", fmt.Errorf("-o - is not supported while recording an interactive terminal")
 	}
 
 	abs := request
@@ -90,6 +96,16 @@ func ensureWritableTarget(path string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create output directory %s: %w", dir, err)
 	}
+	// MkdirAll succeeds on an existing read-only directory, so actually probe:
+	// the render step writes a temp file next to the target, and finding out
+	// only after the session ends would lose the recording.
+	probe, err := os.CreateTemp(dir, ".ttysvg-probe-*")
+	if err != nil {
+		return fmt.Errorf("directory %s is not writable: %w", dir, err)
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
 	return nil
 }
 
