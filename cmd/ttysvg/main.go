@@ -17,7 +17,7 @@ import (
 var version = "0.0.7"
 
 // defaultCaptureInterval is the default minimum time between captured frames
-// (and the default idle-capture interval), i.e. 30 frames per second. Recording
+// (and the default idle-capture interval), i.e. 40 frames per second. Recording
 // only emits a frame when the screen changes, so this bounds the rate during
 // animation without adding frames to idle stretches.
 const defaultCaptureInterval = time.Second / 40
@@ -41,6 +41,7 @@ var valueFlags = map[string]bool{
 	"o": true, "size": true, "frame": true, "idle": true, "fps": true,
 	"font-size": true, "font-family": true, "cell-width": true,
 	"cell-height": true, "padding": true, "theme": true, "bg": true,
+	"hold": true, "cast": true,
 }
 
 func main() {
@@ -62,6 +63,7 @@ func run(args []string) (int, error) {
 	var cellWidth float64
 	var cellHeight float64
 	var padding float64
+	var hold time.Duration
 	var queryTerminal bool
 	var noClear bool
 	var autostart bool
@@ -76,10 +78,10 @@ func run(args []string) (int, error) {
 	flags.BoolVar(&gzipOut, "gz", false, "write a gzip-compressed .svgz file; smaller for self-hosted pages and CI artifacts")
 	flags.StringVar(&size, "size", "", "recording size as COLSxROWS; omit either side to auto-fit the terminal (100x, x30, 100x30)")
 	flags.Float64Var(&fps, "fps", 0, "target frames per second; sets the capture rate (overrides -frame and -idle), e.g. 30")
-	flags.DurationVar(&frame, "frame", defaultCaptureInterval, "minimum time between captured SVG frames; default 33ms (30fps)")
-	flags.DurationVar(&idle, "idle", defaultCaptureInterval, "capture a frame after this much output silence; 0 disables")
-	flags.Float64Var(&fontSize, "font-size", 0, "SVG output font size in px; does not change the live terminal font; defaults to detected terminal font size with -query-terminal, otherwise 14")
-	flags.StringVar(&fontFamily, "font-family", "", "SVG CSS font-family; defaults to terminal font plus Nerd Font fallbacks")
+	flags.DurationVar(&frame, "frame", defaultCaptureInterval, "minimum time between captured SVG frames; default 25ms (40fps)")
+	flags.DurationVar(&idle, "idle", defaultCaptureInterval, "capture a frame after this much output silence; 0 disables; default 25ms")
+	flags.Float64Var(&fontSize, "font-size", 0, "SVG output font size in px; does not change the live terminal font; default 14, or the size reported by -query-terminal")
+	flags.StringVar(&fontFamily, "font-family", "", "SVG CSS font-family; defaults to monospace fallbacks, or the font reported by -query-terminal")
 	flags.Float64Var(&cellWidth, "cell-width", 0, "SVG terminal cell width in px; defaults to font-size*0.62")
 	flags.Float64Var(&cellHeight, "cell-height", 0, "SVG terminal cell height in px; defaults to font-size*1.25")
 	flags.Float64Var(&padding, "padding", 0, "SVG padding in px")
@@ -87,9 +89,11 @@ func run(args []string) (int, error) {
 	flags.StringVar(&cfg.Background, "bg", "", "terminal background color during recording, e.g. #0d1117; also used as SVG background")
 	flags.BoolVar(&queryTerminal, "query-terminal", false, "query/identify the current terminal for colors, theme, and font before recording; slower startup")
 	flags.BoolVar(&noClear, "no-clear", false, "do not clear the terminal before recording starts")
-	flags.BoolVar(&autostart, "autostart", false, "in pane mode, begin recording immediately instead of waiting for Ctrl-R")
+	flags.BoolVar(&autostart, "autostart", false, "in pane mode, begin recording immediately instead of waiting for Ctrl-\\")
 	flags.BoolVar(&headless, "headless", false, "record the requested size directly with no interactive pane; for scripting and CI")
 	flags.BoolVar(&noLoop, "no-loop", false, "play the recording once and freeze the final screen instead of looping")
+	flags.DurationVar(&hold, "hold", 0, "how long the final screen is held before the loop repeats; default 2s")
+	flags.StringVar(&cfg.CastPath, "cast", "", "convert an asciinema .cast file (v2/v3) to SVG instead of recording")
 	flags.BoolVar(&cfg.Quiet, "q", false, "do not print recording summary")
 	flags.BoolVar(&showVersion, "version", false, "print version and exit")
 	flags.Usage = func() {
@@ -101,7 +105,9 @@ func run(args []string) (int, error) {
 		fmt.Fprintf(out, "\nRecording:\n")
 		printFlags(flags, "size", "fps", "frame", "idle", "no-clear", "autostart", "headless", "query-terminal", "bg")
 		fmt.Fprintf(out, "\nAppearance:\n")
-		printFlags(flags, "theme", "font-size", "font-family", "cell-width", "cell-height", "padding", "no-loop")
+		printFlags(flags, "theme", "font-size", "font-family", "cell-width", "cell-height", "padding", "no-loop", "hold")
+		fmt.Fprintf(out, "\nConversion:\n")
+		printFlags(flags, "cast")
 		fmt.Fprintf(out, "\nOther:\n")
 		printFlags(flags, "version")
 	}
@@ -156,7 +162,19 @@ func run(args []string) (int, error) {
 	cfg.Autostart = autostart
 	cfg.Headless = headless
 	cfg.NoLoop = noLoop
+	cfg.EndHold = hold
 	cfg.Gzip = gzipOut
+	if hold < 0 {
+		return 2, errors.New("-hold cannot be negative")
+	}
+
+	// Converting an existing cast needs no recording session or command.
+	if cfg.CastPath != "" && len(cfg.Command) > 0 {
+		return 2, errors.New("-cast converts an existing recording; a command cannot be combined with it")
+	}
+	if cfg.CastPath != "" {
+		return app.Run(context.Background(), cfg)
+	}
 
 	// In a non-interactive context (CI, pipes) there is no shell to drive, so a
 	// command is required. Without this the recorder would launch $SHELL, which

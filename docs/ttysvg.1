@@ -1,4 +1,4 @@
-.Dd June 27, 2026
+.Dd July 3, 2026
 .Dt TTYSVG 1
 .Os
 .Sh NAME
@@ -12,6 +12,8 @@
 .Op Fl autostart
 .Op Fl headless
 .Op Fl no-loop
+.Op Fl hold Ar duration
+.Op Fl cast Ar path
 .Op Fl query-terminal
 .Op Fl version
 .Op Fl o Ar path
@@ -49,10 +51,11 @@ records that command instead.
 Write the SVG to
 .Ar path .
 The path may be a file or a directory.
-If it is a directory, the output file is
-named
-.Pa ttysvg.svg .
+If it is a directory, the animation file is named with the form
+.Pa ttyanim_YYYY.MM.DD-HH.MM.SS.svg .
 The default is the current directory.
+Pane-mode snapshots are written beside the animation with names of the form
+.Pa ttypic_YYYY.MM.DD-HH.MM.SS.svg .
 .It Fl gz
 Write a gzip-compressed
 .Pa .svgz
@@ -93,27 +96,29 @@ or
 .Fl idle .
 Recording only emits a frame when the screen changes, so the rate is a ceiling
 during animation and adds nothing to idle stretches.
-The default rate is 30fps.
+The default rate is 40fps.
 .It Fl frame Ar duration
 Minimum time between sampled SVG frames, as a Go duration such as
-.Ql 33ms .
-The default is 33ms (30fps).
+.Ql 25ms .
+The default is 25ms (40fps).
 .It Fl idle Ar duration
 Capture a frame after this much output silence, as a Go duration.
 A value of
 .Ql 0
 disables idle capture.
-The default is 33ms.
+The default is 25ms.
 .It Fl font-size Ar pixels
 SVG output font size in pixels.
 This does not change the live terminal font during recording.
-The default is the detected terminal font size when
+The default is 14, or the size reported by the terminal when
 .Fl query-terminal
-is enabled, otherwise 14.
+is enabled.
 .It Fl font-family Ar family
 CSS font-family used by the SVG.
-The default is the detected terminal font plus
-common Nerd Font fallbacks.
+The default is a set of common monospace fallbacks, or the font reported by the
+terminal when
+.Fl query-terminal
+is enabled.
 .It Fl cell-width Ar pixels
 SVG terminal cell width in pixels.
 The default is derived from the font size.
@@ -133,21 +138,24 @@ and
 The default is
 .Cm auto .
 .It Fl query-terminal
-Query and identify the current terminal for colors, theme, and font before
-recording.
+Query the current terminal for colors, theme, and font before recording, using
+OSC 10/11, OSC 4, and OSC 50 escape queries.
 This is off by default to minimize startup latency.
 .It Fl no-clear
 Do not clear the terminal before recording starts.
 Clearing is on by default.
 .It Fl autostart
 In pane mode, begin recording immediately instead of waiting for the
-.Ic Ctrl-R
+.Ic Ctrl-\e
 control.
-The
-.Ic Ctrl-P
-and
-.Ic Ctrl-Q
-controls still pause and stop.
+.Ic Ctrl-\e
+still pauses and resumes,
+.Ic Ctrl-\e Ctrl-\e
+saves a static snapshot in any non-stopped pane state, and
+.Ic Ctrl-\(rB
+stops.
+The keys are intercepted only while the pane is active; direct-mode recording
+passes all input through to the child.
 This has no effect in direct mode, which already records from the start.
 .It Fl headless
 Skip the interactive pane entirely and record the requested size directly, even
@@ -157,6 +165,16 @@ Intended for scripting and continuous integration.
 Play the recording once and freeze on the final screen.
 By default the SVG loops indefinitely, holding the final screen briefly before
 restarting.
+.It Fl hold Ar duration
+How long the final screen is held before the loop repeats, as a Go duration.
+The default is 2s.
+.It Fl cast Ar path
+Convert an existing asciinema recording (v2 or v3
+.Pa .cast
+file) to SVG instead of recording a live session.
+The terminal size comes from the cast header unless
+.Fl size
+is given.
 .It Fl version
 Print the version and exit.
 .It Fl q
@@ -180,6 +198,8 @@ ttysvg -o demo.svg -- vim
 ttysvg -size 100x30 -frame 80ms -theme dark -o demo.svg -- go test ./...
 ttysvg -size x30 -no-clear -o demo.svg
 ttysvg -headless -size 100x30 -q -o demo.svg -- make test
+ttysvg -cast demo.cast -o demo.svg
+ttysvg -o - -- make test > demo.svg
 .Ed
 .Pp
 Project page:

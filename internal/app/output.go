@@ -13,7 +13,14 @@ import (
 	"golang.org/x/term"
 )
 
-const defaultOutputName = "ttysvg.svg"
+const (
+	animationOutputPrefix = "ttyanim"
+	snapshotOutputPrefix  = "ttypic"
+)
+
+func timestampedOutputName(prefix string, at time.Time) string {
+	return prefix + "_" + at.Format("2006.01.02-15.04.05") + ".svg"
+}
 
 // svgzPath normalizes a resolved output path to the .svgz extension used for
 // gzip-compressed output: a .svg becomes .svgz, an existing .svgz is kept, and
@@ -31,6 +38,15 @@ func svgzPath(path string) string {
 }
 
 func prepareOutputPath(request string, stdin *os.File, stderr io.Writer) (string, error) {
+	// "-" streams the SVG to stdout; the child's live output moves to stderr.
+	// Refuse when stdout is an interactive terminal, where the SVG would be
+	// dumped into the session being recorded.
+	if request == "-" {
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			return "", fmt.Errorf("-o - writes the SVG to stdout and needs it redirected, e.g. ttysvg -o - -- make test > out.svg")
+		}
+		return "-", nil
+	}
 	path, err := resolveOutputPath(request)
 	if err == nil {
 		err = ensureWritableTarget(path)
@@ -46,11 +62,12 @@ func prepareOutputPath(request string, stdin *os.File, stderr io.Writer) (string
 }
 
 func resolveOutputPath(request string) (string, error) {
+	return resolveOutputPathWithName(request, timestampedOutputName(animationOutputPrefix, time.Now()))
+}
+
+func resolveOutputPathWithName(request string, defaultName string) (string, error) {
 	if request == "" {
 		request = "."
-	}
-	if request == "-" {
-		return "", fmt.Errorf("-o - is not supported while recording an interactive terminal")
 	}
 
 	abs := request
@@ -64,9 +81,25 @@ func resolveOutputPath(request string) (string, error) {
 	abs = filepath.Clean(abs)
 
 	if outputIsDirectoryTarget(request, abs) {
-		abs = filepath.Join(abs, defaultOutputName)
+		abs = filepath.Join(abs, defaultName)
 	}
 	return abs, nil
+}
+
+func resolveSnapshotOutputPath(animationPath string, at time.Time) (string, error) {
+	dir := "."
+	if animationPath != "" && animationPath != "-" {
+		dir = filepath.Dir(animationPath)
+	}
+	abs := dir
+	if !filepath.IsAbs(abs) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("get current directory: %w", err)
+		}
+		abs = filepath.Join(cwd, abs)
+	}
+	return filepath.Join(filepath.Clean(abs), timestampedOutputName(snapshotOutputPrefix, at)), nil
 }
 
 func outputIsDirectoryTarget(raw string, abs string) bool {
@@ -90,15 +123,25 @@ func ensureWritableTarget(path string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create output directory %s: %w", dir, err)
 	}
+	// MkdirAll succeeds on an existing read-only directory, so actually probe:
+	// the render step writes a temp file next to the target, and finding out
+	// only after the session ends would lose the recording.
+	probe, err := os.CreateTemp(dir, ".ttysvg-probe-*")
+	if err != nil {
+		return fmt.Errorf("directory %s is not writable: %w", dir, err)
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
 	return nil
 }
 
 func promptOutputPath(failedPath string, cause error, stdin *os.File, stderr io.Writer) (string, error) {
-	now := time.Now().Format("20060102-150405")
+	name := timestampedOutputName(animationOutputPrefix, time.Now())
 	options := []string{
-		filepath.Join(os.TempDir(), defaultOutputName),
-		filepath.Join(os.TempDir(), "ttysvg-"+now+".svg"),
-		filepath.Join(os.TempDir(), "ttysvg", defaultOutputName),
+		filepath.Join(os.TempDir(), name),
+		filepath.Join(os.TempDir(), "ttysvg", name),
+		filepath.Join(os.TempDir(), "ttysvg.svg"),
 	}
 
 	fmt.Fprintf(stderr, "ttysvg: cannot write to %s: %v\n", failedPath, cause)

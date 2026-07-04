@@ -18,6 +18,7 @@ var magic = []byte("TTSVGLOG1\n")
 type Writer struct {
 	w       *bufio.Writer
 	scratch [binary.MaxVarintLen64]byte
+	lastAt  time.Duration
 	closed  bool
 }
 
@@ -45,8 +46,16 @@ func (w *Writer) WriteOutput(at time.Duration, data []byte) error {
 	if err := w.writeUvarint(uint64(len(data))); err != nil {
 		return err
 	}
+	w.lastAt = at
 	_, err := w.w.Write(data)
 	return err
+}
+
+// LastAt returns the timestamp of the last record written, i.e. the recording
+// length so far. It saves re-reading the log when the total duration is needed
+// after recording (looping SVGs time reveals as fractions of the loop period).
+func (w *Writer) LastAt() time.Duration {
+	return w.lastAt
 }
 
 func (w *Writer) Close() error {

@@ -55,8 +55,24 @@ func (r Recorder) Run(ctx context.Context, sink Sink) (int, error) {
 		input = r.Stdin
 	}
 	if input != nil {
+		inputDone := make(chan struct{})
 		go func() {
 			_, _ = io.Copy(ptmx, input)
+			close(inputDone)
+		}()
+		// After the session ends the copier is still blocked reading stdin; its
+		// next read would swallow a keystroke typed during SVG conversion and
+		// write it into the closed PTY. A read deadline unblocks it now.
+		defer func() {
+			if d, ok := input.(interface{ SetReadDeadline(time.Time) error }); ok {
+				if d.SetReadDeadline(time.Now()) == nil {
+					select {
+					case <-inputDone:
+					case <-time.After(200 * time.Millisecond):
+					}
+					_ = d.SetReadDeadline(time.Time{})
+				}
+			}
 		}()
 	}
 

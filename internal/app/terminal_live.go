@@ -203,6 +203,17 @@ func (t *liveTerminal) RecordingPrefix() []byte {
 	return nil
 }
 
+func (t *liveTerminal) SnapshotFrame() (termemu.Frame, bool, error) {
+	if !t.Decorated() {
+		return termemu.Frame{}, false, nil
+	}
+	if snapper, ok := t.writer.(interface{ SnapshotFrame() (termemu.Frame, error) }); ok {
+		frame, err := snapper.SnapshotFrame()
+		return frame, true, err
+	}
+	return termemu.Frame{}, false, nil
+}
+
 // interval is the upper bound on preview latency; a leading-edge repaint keeps
 // the first byte of an idle period responsive.
 const (
@@ -244,8 +255,11 @@ type paneWriter struct {
 
 // resolveStyle memoizes the most recent terminal-style → liveStyle mapping.
 // Adjacent cells almost always share a style, so this collapses a run to a
-// single palette resolution + hex parse.
+// single palette resolution + hex parse. Cell-shape bits (wide/continuation)
+// do not affect the rendered style and are masked so they cannot fragment the
+// memoized entry.
 func (p *paneWriter) resolveStyle(in termemu.Style) liveStyle {
+	in = in.Visual()
 	if p.styleCached && in == p.styleIn {
 		return p.styleOut
 	}
@@ -268,7 +282,7 @@ func (p *paneWriter) writeStyledCells(b *bytes.Buffer, cells []termemu.Cell) {
 			prev = style
 			prevSet = true
 		}
-		if cell.WideContinuation {
+		if cell.WideContinuation() {
 			continue
 		}
 		writePaneCell(b, cell)
@@ -277,14 +291,7 @@ func (p *paneWriter) writeStyledCells(b *bytes.Buffer, cells []termemu.Cell) {
 }
 
 func newPaneWriter(stdout *os.File, cfg Config, layout paneLayout, mu *sync.Mutex, live *liveTerminal) *paneWriter {
-	screen := termemu.NewScreen(cfg.Cols, cfg.Rows)
-	termName := os.Getenv("TERM")
-	if termName == "" {
-		termName = "xterm-256color"
-	}
-	if info, ok := termemu.LoadTerminfo(termName); ok {
-		screen.SetTerminfo(info)
-	}
+	screen := newEmulatorScreen(cfg.Cols, cfg.Rows)
 	p := &paneWriter{
 		stdout:   stdout,
 		screen:   screen,
@@ -419,6 +426,18 @@ func (p *paneWriter) RecordingPrefix() []byte {
 	frame := p.screen.Snapshot()
 	defer frame.Release()
 	return p.frameToANSI(frame)
+}
+
+func (p *paneWriter) SnapshotFrame() (termemu.Frame, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return termemu.Frame{}, errors.New("pane is closed")
+	}
+	if err := p.renderNowLocked(true); err != nil {
+		return termemu.Frame{}, err
+	}
+	return p.screen.Snapshot(), nil
 }
 
 func (p *paneWriter) frameToANSI(frame termemu.Frame) []byte {

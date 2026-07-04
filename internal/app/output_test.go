@@ -1,6 +1,10 @@
 package app
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestSvgzPath(t *testing.T) {
 	cases := map[string]string{
@@ -14,5 +18,37 @@ func TestSvgzPath(t *testing.T) {
 		if got := svgzPath(in); got != want {
 			t.Errorf("svgzPath(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestTimestampedOutputName(t *testing.T) {
+	at := time.Date(2026, 7, 4, 15, 6, 7, 0, time.UTC)
+	if got, want := timestampedOutputName(animationOutputPrefix, at), "ttyanim_2026.07.04-15.06.07.svg"; got != want {
+		t.Fatalf("animation name = %q, want %q", got, want)
+	}
+	if got, want := timestampedOutputName(snapshotOutputPrefix, at), "ttypic_2026.07.04-15.06.07.svg"; got != want {
+		t.Fatalf("snapshot name = %q, want %q", got, want)
+	}
+}
+
+func TestResolveOutputPathDirectoryUsesTimestampedAnimationName(t *testing.T) {
+	dir := t.TempDir()
+	got, err := resolveOutputPathWithName(dir, "ttyanim_2026.07.04-15.06.07.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "ttyanim_2026.07.04-15.06.07.svg"); got != want {
+		t.Fatalf("directory output = %q, want %q", got, want)
+	}
+}
+
+func TestResolveSnapshotOutputPathUsesAnimationDirectory(t *testing.T) {
+	at := time.Date(2026, 7, 4, 15, 6, 7, 0, time.UTC)
+	got, err := resolveSnapshotOutputPath(filepath.Join(t.TempDir(), "demo.svg"), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(filepath.Dir(got), "ttypic_2026.07.04-15.06.07.svg"); got != want {
+		t.Fatalf("snapshot output = %q, want %q", got, want)
 	}
 }

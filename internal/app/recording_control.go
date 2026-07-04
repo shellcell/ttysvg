@@ -5,15 +5,24 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
 
+// Pane control keys, always shown in the status bar so they are discoverable.
+// They are intercepted before reaching the child while the pane is active
+// (direct-mode recording filters nothing, so apps that need these bytes —
+// e.g. telnet's Ctrl-] escape — still receive them there). These two are the
+// least-contended control bytes: Ctrl-\ only means SIGQUIT (and is asciinema's
+// pause key), and Ctrl-] is telnet's own "escape the session" key; neither is
+// used by readline, tmux, screen, or fzf.
 const (
-	keyStart  = 0x12 // Ctrl-R
-	keyPause  = 0x10 // Ctrl-P
-	keyStop   = 0x11 // Ctrl-Q
-	frameHold = 250 * time.Millisecond
+	keyToggle            = 0x1c // Ctrl-\ : start / pause / resume; double press snapshots in pane mode
+	keyStop              = 0x1d // Ctrl-] : stop and save
+	frameHold            = 250 * time.Millisecond
+	keyDoublePressWindow = 250 * time.Millisecond
+	snapshotMessageHold  = 2 * time.Second
 )
 
 type recordingState uint8
@@ -26,18 +35,24 @@ const (
 )
 
 type recordingControl struct {
-	mu            sync.Mutex
-	sink          eventSink
-	live          *liveTerminal
-	cancel        context.CancelFunc
-	state         recordingState
-	started       bool
-	stopRequested bool
-	base          time.Duration
-	activeStart   time.Time
-	err           error
-	stopTicks     chan struct{}
-	tickOnce      sync.Once
+	mu             sync.Mutex
+	sink           eventSink
+	live           *liveTerminal
+	cancel         context.CancelFunc
+	state          recordingState
+	started        bool
+	stopRequested  bool
+	base           time.Duration
+	activeStart    time.Time
+	err            error
+	stopTicks      chan struct{}
+	tickOnce       sync.Once
+	toggleTimer    *time.Timer
+	togglePending  bool
+	messageTimer   *time.Timer
+	messageToken   uint64
+	messageVisible bool
+	snapshots      []string
 }
 
 type eventSink interface {
@@ -65,9 +80,30 @@ func (c *recordingControl) WriteOutput(_ time.Duration, data []byte) error {
 	return nil
 }
 
+func (c *recordingControl) ToggleKey() {
+	var snapshot bool
+	c.mu.Lock()
+	if c.err != nil || c.state == recordingStopped {
+		c.mu.Unlock()
+		return
+	}
+	if c.togglePending {
+		c.clearPendingToggleLocked()
+		snapshot = true
+	} else {
+		c.armToggleLocked()
+	}
+	c.mu.Unlock()
+	if snapshot {
+		c.saveSnapshot()
+	}
+}
+
 func (c *recordingControl) StartOrResume() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.clearPendingToggleLocked()
+	c.clearTemporaryMessageLocked()
 	switch c.state {
 	case recordingPreparing:
 		c.startLocked()
@@ -79,6 +115,8 @@ func (c *recordingControl) StartOrResume() {
 func (c *recordingControl) PauseOrResume() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.clearPendingToggleLocked()
+	c.clearTemporaryMessageLocked()
 	switch c.state {
 	case recordingActive:
 		c.pauseLocked()
@@ -91,6 +129,8 @@ func (c *recordingControl) PauseOrResume() {
 
 func (c *recordingControl) Stop() {
 	c.mu.Lock()
+	c.clearPendingToggleLocked()
+	c.clearTemporaryMessageLocked()
 	if c.state == recordingActive {
 		c.base += time.Since(c.activeStart)
 	}
@@ -127,7 +167,109 @@ func (c *recordingControl) Err() error {
 }
 
 func (c *recordingControl) Close() {
+	c.mu.Lock()
+	c.clearPendingToggleLocked()
+	c.clearTemporaryMessageLocked()
+	c.mu.Unlock()
 	close(c.stopTicks)
+}
+
+func (c *recordingControl) Snapshots() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.snapshots...)
+}
+
+func (c *recordingControl) armToggleLocked() {
+	c.clearPendingToggleLocked()
+	c.togglePending = true
+	c.toggleTimer = time.AfterFunc(keyDoublePressWindow, c.fireToggle)
+}
+
+func (c *recordingControl) clearPendingToggleLocked() {
+	c.togglePending = false
+	if c.toggleTimer != nil {
+		c.toggleTimer.Stop()
+		c.toggleTimer = nil
+	}
+}
+
+func (c *recordingControl) fireToggle() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.togglePending || c.err != nil || c.state == recordingStopped {
+		return
+	}
+	c.togglePending = false
+	c.toggleTimer = nil
+	c.clearTemporaryMessageLocked()
+	switch c.state {
+	case recordingPreparing:
+		c.startLocked()
+	case recordingActive:
+		c.pauseLocked()
+	case recordingPaused:
+		c.resumeLocked()
+	}
+}
+
+func (c *recordingControl) saveSnapshot() {
+	if c.live == nil {
+		return
+	}
+	frame, ok, err := c.live.SnapshotFrame()
+	if err == nil && !ok {
+		err = fmt.Errorf("snapshot is available only in pane mode")
+	}
+	path := ""
+	if err == nil {
+		path, err = resolveSnapshotOutputPath(c.live.cfg.OutputPath, time.Now())
+	}
+	if err == nil {
+		_, err = renderSnapshot(path, c.live.cfg, frame)
+	}
+	frame.Release()
+	if err != nil {
+		c.showTemporaryMessage("snapshot failed: "+err.Error(), snapshotMessageHold)
+		return
+	}
+	c.mu.Lock()
+	c.snapshots = append(c.snapshots, path)
+	c.mu.Unlock()
+	c.showTemporaryMessage("snapshot saved: "+filepath.Base(path), snapshotMessageHold)
+}
+
+func (c *recordingControl) showTemporaryMessage(message string, hold time.Duration) {
+	if c.live == nil {
+		return
+	}
+	c.mu.Lock()
+	c.clearTemporaryMessageLocked()
+	token := c.messageToken
+	c.messageVisible = true
+	c.messageTimer = time.AfterFunc(hold, func() { c.restoreTemporaryMessage(token) })
+	c.mu.Unlock()
+	c.live.ShowControlMessage(message)
+}
+
+func (c *recordingControl) restoreTemporaryMessage(token uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if token != c.messageToken || c.state == recordingStopped {
+		return
+	}
+	c.messageVisible = false
+	c.messageTimer = nil
+	c.updateLiveLocked()
+}
+
+func (c *recordingControl) clearTemporaryMessageLocked() {
+	c.messageToken++
+	c.messageVisible = false
+	if c.messageTimer != nil {
+		c.messageTimer.Stop()
+		c.messageTimer = nil
+	}
 }
 
 func (c *recordingControl) startLocked() {
@@ -200,6 +342,9 @@ func (c *recordingControl) updateLiveLocked() {
 	if c.live == nil {
 		return
 	}
+	if c.messageVisible {
+		return
+	}
 	elapsed := c.base
 	if c.state == recordingActive {
 		elapsed += time.Since(c.activeStart)
@@ -216,6 +361,11 @@ type paneInputReader struct {
 
 func newPaneInputReader(src *os.File, live *liveTerminal, control *recordingControl) io.Reader {
 	return &paneInputReader{src: src, live: live, control: control}
+}
+
+// SetReadDeadline lets the recorder unblock the stdin copier at shutdown.
+func (r *paneInputReader) SetReadDeadline(t time.Time) error {
+	return r.src.SetReadDeadline(t)
 }
 
 func (r *paneInputReader) Read(p []byte) (int, error) {
