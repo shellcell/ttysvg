@@ -17,9 +17,11 @@ _ttysvg() {
     '-bg+[background color during recording, e.g. #0d1117]:color:' \
     '-query-terminal[query/identify terminal colors, theme, and font before recording]' \
     '-no-clear[do not clear terminal before recording starts]' \
-    '-autostart[in pane mode, begin recording immediately instead of waiting for Ctrl-R]' \
+    '-autostart[in pane mode, begin recording immediately instead of waiting for Ctrl-\\]' \
     '-headless[record the requested size directly with no interactive pane; for scripting and CI]' \
     '-no-loop[play once and freeze the final screen instead of looping]' \
+    '-hold+[final-screen hold before the loop repeats, e.g. 2s]:duration:' \
+    '-cast+[convert an asciinema .cast file to SVG]:path:_files -g "*.cast"' \
     '-version[print version and exit]' \
     '-q[suppress progress and summary]' \
     '(-h -help)'{-h,-help}'[show help]' \

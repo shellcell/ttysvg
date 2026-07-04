@@ -33,7 +33,17 @@ func (p livePalette) dimStyle() liveStyle {
 
 func (p livePalette) style(style termemu.Style) liveStyle {
 	resolved := p.palette.ResolveStyle(style)
-	return liveStyle{fg: liveColorFromHex(resolved.Fg), bg: liveColorFromHex(resolved.Bg), bold: style.Bold, dim: style.Dim, italic: style.Italic, underline: style.Underline, blink: style.Blink, strikethrough: style.Strikethrough, overline: style.Overline}
+	return liveStyle{
+		fg:            liveColorFromHex(resolved.Fg),
+		bg:            liveColorFromHex(resolved.Bg),
+		bold:          style.Has(termemu.AttrBold),
+		dim:           style.Has(termemu.AttrDim),
+		italic:        style.Has(termemu.AttrItalic),
+		underline:     style.Has(termemu.AttrUnderline),
+		blink:         style.Has(termemu.AttrBlink),
+		strikethrough: style.Has(termemu.AttrStrikethrough),
+		overline:      style.Has(termemu.AttrOverline),
+	}
 }
 
 // liveColor is a pre-parsed terminal color. Resolving the palette hex string to

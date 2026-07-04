@@ -92,11 +92,8 @@ func handleControlKey(b byte, control *recordingControl) bool {
 		return false
 	}
 	switch b {
-	case keyStart:
-		control.StartOrResume()
-		return true
-	case keyPause:
-		control.PauseOrResume()
+	case keyToggle:
+		control.ToggleKey()
 		return true
 	case keyStop:
 		control.Stop()
@@ -163,7 +160,7 @@ func (t *liveTerminal) controlAt(x, y int, state recordingState) paneAction {
 
 func mousePoint(seq []byte) (int, int, bool, bool) {
 	if len(seq) >= 6 && seq[0] == 0x1b && seq[1] == '[' && seq[2] == 'M' {
-		return int(seq[4]) - 32, int(seq[5]) - 32, true, true
+		return int(seq[4]) - 32, int(seq[5]) - 32, isPressButton(int(seq[3])-32, true), true
 	}
 	if len(seq) < 6 || seq[0] != 0x1b || seq[1] != '[' || seq[2] != '<' {
 		return 0, 0, false, false
@@ -173,12 +170,20 @@ func mousePoint(seq []byte) (int, int, bool, bool) {
 	if len(parts) != 3 {
 		return 0, 0, false, false
 	}
+	button, errB := strconv.Atoi(parts[0])
 	x, errX := strconv.Atoi(parts[1])
 	y, errY := strconv.Atoi(parts[2])
-	if errX != nil || errY != nil {
+	if errB != nil || errX != nil || errY != nil {
 		return 0, 0, false, false
 	}
-	return x, y, seq[len(seq)-1] == 'M', true
+	return x, y, isPressButton(button, seq[len(seq)-1] == 'M'), true
+}
+
+// isPressButton reports whether a mouse event is a plain button press: not a
+// release (X10 encodes release as button 3; SGR uses the 'm' final), not a
+// motion event (bit 32), and not a wheel event (bit 64).
+func isPressButton(button int, pressFinal bool) bool {
+	return pressFinal && button&3 != 3 && button&(32|64) == 0
 }
 
 func (t *liveTerminal) childMouseEnabled() bool {

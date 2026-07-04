@@ -7,7 +7,7 @@ _ttysvg()
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    opts="-o -gz -size -fps -frame -idle -font-size -font-family -cell-width -cell-height -padding -theme -bg -query-terminal -no-clear -autostart -headless -no-loop -version -q -h -help --"
+    opts="-o -gz -size -fps -frame -idle -font-size -font-family -cell-width -cell-height -padding -theme -bg -query-terminal -no-clear -autostart -headless -no-loop -hold -cast -version -q -h -help --"
     themes="auto dark light"
 
     case "$prev" in
@@ -19,7 +19,7 @@ _ttysvg()
             COMPREPLY=( $(compgen -W "$themes" -- "$cur") )
             return 0
             ;;
-        -size|-fps|-frame|-idle|-font-size|-font-family|-cell-width|-cell-height|-padding|-bg)
+        -size|-fps|-frame|-idle|-font-size|-font-family|-cell-width|-cell-height|-padding|-bg|-hold)
             return 0
             ;;
         --)

@@ -147,3 +147,73 @@ func TestPaneFlushIntervalFor(t *testing.T) {
 		t.Fatalf("large pane interval = %v, want %v", got, paneFlushIntervalLarge)
 	}
 }
+
+func TestToggleKeyStartsAfterDoublePressWindow(t *testing.T) {
+	control := newRecordingControl(noopEventSink{}, nil, nil)
+	defer control.Close()
+
+	control.ToggleKey()
+	if control.Started() {
+		t.Fatal("single Ctrl-\\ should wait for the double-press window before starting")
+	}
+	waitForControlState(t, control, recordingActive)
+}
+
+func TestToggleKeyDoublePressDoesNotStart(t *testing.T) {
+	control := newRecordingControl(noopEventSink{}, nil, nil)
+	defer control.Close()
+
+	control.ToggleKey()
+	control.ToggleKey()
+	time.Sleep(keyDoublePressWindow + 20*time.Millisecond)
+	if control.Started() {
+		t.Fatal("double Ctrl-\\ should snapshot instead of starting")
+	}
+}
+
+func TestToggleKeyPausesActiveAfterDoublePressWindow(t *testing.T) {
+	control := newRecordingControl(noopEventSink{}, nil, nil)
+	defer control.Close()
+	control.StartOrResume()
+
+	control.ToggleKey()
+	if got := control.State(); got != recordingActive {
+		t.Fatalf("single Ctrl-\\ should wait before pausing, state = %v", got)
+	}
+	waitForControlState(t, control, recordingPaused)
+}
+
+func TestToggleKeyDoublePressKeepsActive(t *testing.T) {
+	control := newRecordingControl(noopEventSink{}, nil, nil)
+	defer control.Close()
+	control.StartOrResume()
+
+	control.ToggleKey()
+	control.ToggleKey()
+	time.Sleep(keyDoublePressWindow + 20*time.Millisecond)
+	if got := control.State(); got != recordingActive {
+		t.Fatalf("double Ctrl-\\ should snapshot and keep recording, state = %v", got)
+	}
+}
+
+func TestSnapshotMessageHold(t *testing.T) {
+	if snapshotMessageHold != 2*time.Second {
+		t.Fatalf("snapshotMessageHold = %v, want 2s", snapshotMessageHold)
+	}
+}
+
+type noopEventSink struct{}
+
+func (noopEventSink) WriteOutput(time.Duration, []byte) error { return nil }
+
+func waitForControlState(t *testing.T, control *recordingControl, want recordingState) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if control.State() == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("state = %v, want %v", control.State(), want)
+}

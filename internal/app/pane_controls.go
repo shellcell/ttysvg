@@ -15,7 +15,25 @@ func (t *liveTerminal) UpdateRecordingState(state recordingState, elapsed time.D
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// The recording-clock ticker outlives the pane (it stops only when the
+	// control is closed after rendering). Once the terminal is restored the
+	// status bar must not be repainted onto the primary screen.
+	if t.restored {
+		return
+	}
 	drawLiveControls(t.stdout, t.cfg, t.layout, state, elapsed)
+}
+
+func (t *liveTerminal) ShowControlMessage(message string) {
+	if !t.Decorated() || t.stdout == nil || !term.IsTerminal(int(t.stdout.Fd())) {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.restored {
+		return
+	}
+	drawLiveControlMessage(t.stdout, t.cfg, t.layout, message)
 }
 
 func drawRecordingFrame(stdout *os.File, cfg Config, layout paneLayout, recording bool) {
@@ -50,12 +68,19 @@ func drawRecordingFrame(stdout *os.File, cfg Config, layout paneLayout, recordin
 }
 
 func drawLiveControls(stdout *os.File, cfg Config, layout paneLayout, state recordingState, elapsed time.Duration) {
+	drawLiveControl(stdout, cfg, layout, controlMessage(cfg, state, elapsed), sideControlLines(cfg, state, elapsed))
+}
+
+func drawLiveControlMessage(stdout *os.File, cfg Config, layout paneLayout, message string) {
+	drawLiveControl(stdout, cfg, layout, " "+message+" ", []string{message})
+}
+
+func drawLiveControl(stdout *os.File, cfg Config, layout paneLayout, message string, lines []string) {
 	pal := newLivePalette(cfg)
 	var b strings.Builder
 	status := pal.statusStyle().sgr()
 	dim := pal.dimStyle().sgr()
 	reset := "\x1b[0m"
-	message := controlMessage(cfg, state, elapsed)
 	// Save the application cursor before repainting controls and restore it
 	// afterwards (DECSC/DECRC). Without this the physical cursor is left in the
 	// status bar after every redraw, so the pane prompt appears to lose its
@@ -64,7 +89,6 @@ func drawLiveControls(stdout *os.File, cfg Config, layout paneLayout, state reco
 	if layout.statusRow > 0 {
 		writeAt(&b, layout.statusRow, 1, status+fitText(message, layout.controlWidth(cfg.Cols))+reset)
 	} else if layout.sideCol > 0 && layout.sideWidth > 0 {
-		lines := sideControlLines(cfg, state, elapsed)
 		for row := 0; row < layout.innerRows; row++ {
 			text := ""
 			if row < len(lines) {
@@ -149,13 +173,13 @@ func controlMessage(cfg Config, state recordingState, elapsed time.Duration) str
 func controlKeyHint(state recordingState) string {
 	switch state {
 	case recordingActive:
-		return "Ctrl-P pause Ctrl-Q stop"
+		return `Ctrl-\ pause Ctrl-\\ snapshot Ctrl-] stop`
 	case recordingPaused:
-		return "Ctrl-R resume Ctrl-Q stop"
+		return `Ctrl-\ resume Ctrl-\\ snapshot Ctrl-] stop`
 	case recordingStopped:
 		return ""
 	default:
-		return "Ctrl-R start Ctrl-Q stop"
+		return `Ctrl-\ start Ctrl-\\ snapshot Ctrl-] stop`
 	}
 }
 
@@ -166,13 +190,13 @@ func sideControlLines(cfg Config, state recordingState, elapsed time.Duration) [
 	}
 	switch state {
 	case recordingActive:
-		lines = append(lines, "REC", formatRecordClock(elapsed), "", "^P pause", "^Q stop")
+		lines = append(lines, "REC", formatRecordClock(elapsed), "", `^\ pause`, `^\ ^\ snap`, `^] stop`)
 	case recordingPaused:
-		lines = append(lines, "PAUSED", formatRecordClock(elapsed), "", "^R resume", "^Q stop")
+		lines = append(lines, "PAUSED", formatRecordClock(elapsed), "", `^\ resume`, `^\ ^\ snap`, `^] stop`)
 	case recordingStopped:
 		lines = append(lines, "STOP")
 	default:
-		lines = append(lines, "PREP", "", "^R start", "^Q stop")
+		lines = append(lines, "PREP", "", `^\ start`, `^\ ^\ snap`, `^] stop`)
 	}
 	return lines
 }
