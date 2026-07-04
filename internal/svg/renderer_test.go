@@ -190,6 +190,30 @@ func TestRendererOutputHasNoNewlines(t *testing.T) {
 	}
 }
 
+func TestRendererStaticSnapshotHasNoAnimation(t *testing.T) {
+	var buf bytes.Buffer
+	renderer := NewRenderer(&buf, Config{Cols: 1, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12, Static: true})
+	frame := terminal.Frame{Cols: 1, Rows: 1, Data: []terminal.Cell{{Ch: 'A'}}}
+
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.WriteStaticFrame(frame); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, `<animate`) || strings.Contains(out, `<set `) || strings.Contains(out, `opacity="0"`) {
+		t.Fatalf("static snapshot should not contain animation markup:\n%s", out)
+	}
+	if !strings.Contains(out, `<title>Terminal snapshot</title>`) || !strings.Contains(out, `>A</text>`) {
+		t.Fatalf("static snapshot missing expected content:\n%s", out)
+	}
+}
+
 func TestRendererEmitsCursor(t *testing.T) {
 	var buf bytes.Buffer
 	renderer := NewRenderer(&buf, Config{Cols: 1, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})

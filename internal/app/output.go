@@ -13,7 +13,14 @@ import (
 	"golang.org/x/term"
 )
 
-const defaultOutputName = "ttysvg.svg"
+const (
+	animationOutputPrefix = "ttyanim"
+	snapshotOutputPrefix  = "ttypic"
+)
+
+func timestampedOutputName(prefix string, at time.Time) string {
+	return prefix + "_" + at.Format("2006.01.02-15.04.05") + ".svg"
+}
 
 // svgzPath normalizes a resolved output path to the .svgz extension used for
 // gzip-compressed output: a .svg becomes .svgz, an existing .svgz is kept, and
@@ -55,6 +62,10 @@ func prepareOutputPath(request string, stdin *os.File, stderr io.Writer) (string
 }
 
 func resolveOutputPath(request string) (string, error) {
+	return resolveOutputPathWithName(request, timestampedOutputName(animationOutputPrefix, time.Now()))
+}
+
+func resolveOutputPathWithName(request string, defaultName string) (string, error) {
 	if request == "" {
 		request = "."
 	}
@@ -70,9 +81,25 @@ func resolveOutputPath(request string) (string, error) {
 	abs = filepath.Clean(abs)
 
 	if outputIsDirectoryTarget(request, abs) {
-		abs = filepath.Join(abs, defaultOutputName)
+		abs = filepath.Join(abs, defaultName)
 	}
 	return abs, nil
+}
+
+func resolveSnapshotOutputPath(animationPath string, at time.Time) (string, error) {
+	dir := "."
+	if animationPath != "" && animationPath != "-" {
+		dir = filepath.Dir(animationPath)
+	}
+	abs := dir
+	if !filepath.IsAbs(abs) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("get current directory: %w", err)
+		}
+		abs = filepath.Join(cwd, abs)
+	}
+	return filepath.Join(filepath.Clean(abs), timestampedOutputName(snapshotOutputPrefix, at)), nil
 }
 
 func outputIsDirectoryTarget(raw string, abs string) bool {
@@ -110,11 +137,11 @@ func ensureWritableTarget(path string) error {
 }
 
 func promptOutputPath(failedPath string, cause error, stdin *os.File, stderr io.Writer) (string, error) {
-	now := time.Now().Format("20060102-150405")
+	name := timestampedOutputName(animationOutputPrefix, time.Now())
 	options := []string{
-		filepath.Join(os.TempDir(), defaultOutputName),
-		filepath.Join(os.TempDir(), "ttysvg-"+now+".svg"),
-		filepath.Join(os.TempDir(), "ttysvg", defaultOutputName),
+		filepath.Join(os.TempDir(), name),
+		filepath.Join(os.TempDir(), "ttysvg", name),
+		filepath.Join(os.TempDir(), "ttysvg.svg"),
 	}
 
 	fmt.Fprintf(stderr, "ttysvg: cannot write to %s: %v\n", failedPath, cause)

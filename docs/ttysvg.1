@@ -51,10 +51,11 @@ records that command instead.
 Write the SVG to
 .Ar path .
 The path may be a file or a directory.
-If it is a directory, the output file is
-named
-.Pa ttysvg.svg .
+If it is a directory, the animation file is named with the form
+.Pa ttyanim_YYYY.MM.DD-HH.MM.SS.svg .
 The default is the current directory.
+Pane-mode snapshots are written beside the animation with names of the form
+.Pa ttypic_YYYY.MM.DD-HH.MM.SS.svg .
 .It Fl gz
 Write a gzip-compressed
 .Pa .svgz
@@ -148,7 +149,9 @@ In pane mode, begin recording immediately instead of waiting for the
 .Ic Ctrl-\e
 control.
 .Ic Ctrl-\e
-still pauses and resumes, and
+still pauses and resumes,
+.Ic Ctrl-\e Ctrl-\e
+saves a static snapshot in any non-stopped pane state, and
 .Ic Ctrl-\(rB
 stops.
 The keys are intercepted only while the pane is active; direct-mode recording

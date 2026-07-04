@@ -93,9 +93,7 @@ func handleControlKey(b byte, control *recordingControl) bool {
 	}
 	switch b {
 	case keyToggle:
-		// One key drives the whole lifecycle: start when preparing, pause
-		// when recording, resume when paused.
-		control.PauseOrResume()
+		control.ToggleKey()
 		return true
 	case keyStop:
 		control.Stop()

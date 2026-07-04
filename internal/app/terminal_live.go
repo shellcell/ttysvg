@@ -203,6 +203,17 @@ func (t *liveTerminal) RecordingPrefix() []byte {
 	return nil
 }
 
+func (t *liveTerminal) SnapshotFrame() (termemu.Frame, bool, error) {
+	if !t.Decorated() {
+		return termemu.Frame{}, false, nil
+	}
+	if snapper, ok := t.writer.(interface{ SnapshotFrame() (termemu.Frame, error) }); ok {
+		frame, err := snapper.SnapshotFrame()
+		return frame, true, err
+	}
+	return termemu.Frame{}, false, nil
+}
+
 // interval is the upper bound on preview latency; a leading-edge repaint keeps
 // the first byte of an idle period responsive.
 const (
@@ -415,6 +426,18 @@ func (p *paneWriter) RecordingPrefix() []byte {
 	frame := p.screen.Snapshot()
 	defer frame.Release()
 	return p.frameToANSI(frame)
+}
+
+func (p *paneWriter) SnapshotFrame() (termemu.Frame, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return termemu.Frame{}, errors.New("pane is closed")
+	}
+	if err := p.renderNowLocked(true); err != nil {
+		return termemu.Frame{}, err
+	}
+	return p.screen.Snapshot(), nil
 }
 
 func (p *paneWriter) frameToANSI(frame termemu.Frame) []byte {

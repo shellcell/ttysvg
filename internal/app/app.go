@@ -203,9 +203,14 @@ func Run(ctx context.Context, cfg Config) (int, error) {
 	if recordErr != nil {
 		return exitCodeOrOne(exitCode), recordErr
 	}
+	if control != nil && !cfg.Quiet {
+		for _, path := range control.Snapshots() {
+			fmt.Fprintf(os.Stderr, "ttysvg: wrote snapshot %s\n", path)
+		}
+	}
 	if control != nil && !control.Started() {
 		if !cfg.Quiet {
-			fmt.Fprintf(os.Stderr, "ttysvg: recording was not started; no SVG written\n")
+			fmt.Fprintf(os.Stderr, "ttysvg: recording was not started; no animation written\n")
 		}
 		return exitCode, nil
 	}
