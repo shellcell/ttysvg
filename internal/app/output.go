@@ -16,10 +16,15 @@ import (
 const (
 	animationOutputPrefix = "ttyanim"
 	snapshotOutputPrefix  = "ttypic"
+	textSnapshotPrefix    = "ttytxt"
 )
 
 func timestampedOutputName(prefix string, at time.Time) string {
 	return prefix + "_" + at.Format("2006.01.02-15.04.05") + ".svg"
+}
+
+func timestampedTextSnapshotName(at time.Time) string {
+	return textSnapshotPrefix + "-" + at.Format("2006.01.02-15.04.05") + ".txt"
 }
 
 // svgzPath normalizes a resolved output path to the .svgz extension used for
@@ -87,6 +92,14 @@ func resolveOutputPathWithName(request string, defaultName string) (string, erro
 }
 
 func resolveSnapshotOutputPath(animationPath string, at time.Time) (string, error) {
+	return resolveCompanionOutputPath(animationPath, timestampedOutputName(snapshotOutputPrefix, at))
+}
+
+func resolveTextSnapshotOutputPath(animationPath string, at time.Time) (string, error) {
+	return resolveCompanionOutputPath(animationPath, timestampedTextSnapshotName(at))
+}
+
+func resolveCompanionOutputPath(animationPath string, name string) (string, error) {
 	dir := "."
 	if animationPath != "" && animationPath != "-" {
 		dir = filepath.Dir(animationPath)
@@ -99,7 +112,7 @@ func resolveSnapshotOutputPath(animationPath string, at time.Time) (string, erro
 		}
 		abs = filepath.Join(cwd, abs)
 	}
-	return filepath.Join(filepath.Clean(abs), timestampedOutputName(snapshotOutputPrefix, at)), nil
+	return filepath.Join(filepath.Clean(abs), name), nil
 }
 
 func outputIsDirectoryTarget(raw string, abs string) bool {

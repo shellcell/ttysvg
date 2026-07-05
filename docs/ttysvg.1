@@ -55,7 +55,10 @@ If it is a directory, the animation file is named with the form
 .Pa ttyanim_YYYY.MM.DD-HH.MM.SS.svg .
 The default is the current directory.
 Pane-mode snapshots are written beside the animation with names of the form
-.Pa ttypic_YYYY.MM.DD-HH.MM.SS.svg .
+.Pa ttypic_YYYY.MM.DD-HH.MM.SS.svg
+and a plain-text companion
+.Pa ttytxt-YYYY.MM.DD-HH.MM.SS.txt
+suitable for pasting into Markdown code fences.
 .It Fl gz
 Write a gzip-compressed
 .Pa .svgz
@@ -151,7 +154,7 @@ control.
 .Ic Ctrl-\e
 still pauses and resumes,
 .Ic Ctrl-\e Ctrl-\e
-saves a static snapshot in any non-stopped pane state, and
+saves static SVG and plain-text snapshots in any non-stopped pane state, and
 .Ic Ctrl-\(rB
 stops.
 The keys are intercepted only while the pane is active; direct-mode recording

@@ -221,12 +221,20 @@ func (c *recordingControl) saveSnapshot() {
 	if err == nil && !ok {
 		err = fmt.Errorf("snapshot is available only in pane mode")
 	}
-	path := ""
+	svgPath := ""
+	textPath := ""
 	if err == nil {
-		path, err = resolveSnapshotOutputPath(c.live.cfg.OutputPath, time.Now())
+		now := time.Now()
+		svgPath, err = resolveSnapshotOutputPath(c.live.cfg.OutputPath, now)
+		if err == nil {
+			textPath, err = resolveTextSnapshotOutputPath(c.live.cfg.OutputPath, now)
+		}
 	}
 	if err == nil {
-		_, err = renderSnapshot(path, c.live.cfg, frame)
+		_, err = renderSnapshot(svgPath, c.live.cfg, frame)
+	}
+	if err == nil {
+		_, err = renderTextSnapshot(textPath, frame)
 	}
 	frame.Release()
 	if err != nil {
@@ -234,9 +242,9 @@ func (c *recordingControl) saveSnapshot() {
 		return
 	}
 	c.mu.Lock()
-	c.snapshots = append(c.snapshots, path)
+	c.snapshots = append(c.snapshots, svgPath, textPath)
 	c.mu.Unlock()
-	c.showTemporaryMessage("snapshot saved: "+filepath.Base(path), snapshotMessageHold)
+	c.showTemporaryMessage("snapshot saved: "+filepath.Base(svgPath)+" + "+filepath.Base(textPath), snapshotMessageHold)
 }
 
 func (c *recordingControl) showTemporaryMessage(message string, hold time.Duration) {

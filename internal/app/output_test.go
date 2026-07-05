@@ -29,6 +29,9 @@ func TestTimestampedOutputName(t *testing.T) {
 	if got, want := timestampedOutputName(snapshotOutputPrefix, at), "ttypic_2026.07.04-15.06.07.svg"; got != want {
 		t.Fatalf("snapshot name = %q, want %q", got, want)
 	}
+	if got, want := timestampedTextSnapshotName(at), "ttytxt-2026.07.04-15.06.07.txt"; got != want {
+		t.Fatalf("text snapshot name = %q, want %q", got, want)
+	}
 }
 
 func TestResolveOutputPathDirectoryUsesTimestampedAnimationName(t *testing.T) {
@@ -44,11 +47,19 @@ func TestResolveOutputPathDirectoryUsesTimestampedAnimationName(t *testing.T) {
 
 func TestResolveSnapshotOutputPathUsesAnimationDirectory(t *testing.T) {
 	at := time.Date(2026, 7, 4, 15, 6, 7, 0, time.UTC)
-	got, err := resolveSnapshotOutputPath(filepath.Join(t.TempDir(), "demo.svg"), at)
+	dir := t.TempDir()
+	got, err := resolveSnapshotOutputPath(filepath.Join(dir, "demo.svg"), at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(filepath.Dir(got), "ttypic_2026.07.04-15.06.07.svg"); got != want {
+	if want := filepath.Join(dir, "ttypic_2026.07.04-15.06.07.svg"); got != want {
 		t.Fatalf("snapshot output = %q, want %q", got, want)
+	}
+	got, err = resolveTextSnapshotOutputPath(filepath.Join(dir, "demo.svg"), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "ttytxt-2026.07.04-15.06.07.txt"); got != want {
+		t.Fatalf("text snapshot output = %q, want %q", got, want)
 	}
 }

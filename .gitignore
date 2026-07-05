@@ -6,4 +6,5 @@
 *.out
 *.svg
 *.svgz
+*.txt
 !resources/*
