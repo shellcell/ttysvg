@@ -430,8 +430,14 @@ func TestRendererEmitsCombiningAndSkipsWideContinuation(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "e\u0301你") {
-		t.Fatalf("missing combining text:\n%s", out)
+	// The combining sequence is more than one UTF-16 code unit, so it must end
+	// its run (Gecko consumes one x entry per code unit); the following BMP
+	// cells continue in their own pinned run.
+	if !strings.Contains(out, "e\u0301</text>") {
+		t.Fatalf("missing combining text run:\n%s", out)
+	}
+	if !strings.Contains(out, `<text x="10 30" y="10">你x</text>`) {
+		t.Fatalf("run after combining cell not pinned correctly:\n%s", out)
 	}
 	if strings.Contains(out, `<text x="10 20"`) {
 		t.Fatalf("wide continuation received its own x position:\n%s", out)
@@ -456,5 +462,99 @@ func TestRendererEmitsRicherTextAttributes(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, `font-style="italic"`) || !strings.Contains(out, `text-decoration="underline line-through overline"`) {
 		t.Fatalf("missing richer text attributes:\n%s", out)
+	}
+}
+
+func TestRendererEndsRunAfterSupplementaryRune(t *testing.T) {
+	var buf bytes.Buffer
+	renderer := NewRenderer(&buf, Config{Cols: 5, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
+	frame := terminal.Frame{Cols: 5, Rows: 1, Data: []terminal.Cell{
+		{Ch: '🐌', Style: terminal.Style{Attrs: terminal.AttrWide}},
+		{Ch: ' ', Style: terminal.Style{Attrs: terminal.AttrWideContinuation}},
+		{Ch: 'E'},
+		{Ch: 'T'},
+		{Ch: 'A'},
+	}}
+
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.WriteFinalFrame(frame, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	// A supplementary-plane rune is two UTF-16 code units; Gecko consumes two
+	// x entries for it, so any glyph sharing its run would shift. It must end
+	// the run, with the following text pinned in its own run.
+	if !strings.Contains(out, `<text x="0" y="10">🐌</text>`) {
+		t.Fatalf("supplementary rune should end its own run:\n%s", out)
+	}
+	if !strings.Contains(out, `<text x="20 30 40" y="10">ETA</text>`) {
+		t.Fatalf("text after supplementary rune should start a new pinned run:\n%s", out)
+	}
+}
+
+func TestRendererDrawsBlockElementsAsRects(t *testing.T) {
+	var buf bytes.Buffer
+	renderer := NewRenderer(&buf, Config{Cols: 4, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
+	fg := terminal.Style{Fg: terminal.Color{Mode: terminal.ColorRGB, R: 0xeb, G: 0xcb, B: 0x8b}}
+	frame := terminal.Frame{Cols: 4, Rows: 1, Data: []terminal.Cell{
+		{Ch: '█', Style: fg},
+		{Ch: '█', Style: fg},
+		{Ch: '░', Style: fg},
+		{Ch: '░', Style: fg},
+	}}
+
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.WriteFinalFrame(frame, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	// Block cells render as exact rects (font fallbacks draw them with the
+	// wrong ink coverage); identical adjacent cells merge into one rect and
+	// shades carry their coverage as fill-opacity.
+	if !strings.Contains(out, `<rect x="0" y="0" width="20" height="12" fill="#ebcb8b"/>`) {
+		t.Fatalf("solid blocks should merge into one full-cell rect:\n%s", out)
+	}
+	if !strings.Contains(out, `<rect x="20" y="0" width="20" height="12" fill="#ebcb8b" fill-opacity="0.25"/>`) {
+		t.Fatalf("light shade should be a rect with 25%% fill-opacity:\n%s", out)
+	}
+	if strings.Contains(out, "█") || strings.Contains(out, "░") {
+		t.Fatalf("block runes should not be emitted as text glyphs:\n%s", out)
+	}
+}
+
+func TestRendererDrawsLowerBlockAnchoredToCellBottom(t *testing.T) {
+	var buf bytes.Buffer
+	renderer := NewRenderer(&buf, Config{Cols: 2, Rows: 1, Theme: "dark", FontSize: 10, CellWidth: 10, CellHeight: 12})
+	frame := terminal.Frame{Cols: 2, Rows: 1, Data: []terminal.Cell{
+		{Ch: '▃'}, // lower three-eighths
+		{Ch: '▃'},
+	}}
+
+	if err := renderer.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.WriteFinalFrame(frame, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderer.End(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	// 3/8 of the 12px cell, anchored at the bottom: y = round(12*5/8) = 8.
+	if !strings.Contains(out, `<rect x="0" y="8" width="20" height="4"/>`) {
+		t.Fatalf("lower block should be a bottom-anchored rect inheriting the default fill:\n%s", out)
 	}
 }

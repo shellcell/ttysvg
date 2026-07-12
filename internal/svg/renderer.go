@@ -640,12 +640,28 @@ func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 		if col >= len(cells) {
 			break
 		}
+		if shape, ok := blockCellShape(cells[col]); ok {
+			next, err := r.emitBlockRun(row, col, cells, shape)
+			if err != nil {
+				return err
+			}
+			col = next
+			continue
+		}
 		start := col
 		key := r.textKey(cells[col].Style)
 		end := col + 1
 		col++
-		for col < len(cells) {
+		// A cell longer than one UTF-16 code unit must be the last glyph of
+		// its run: engines disagree on whether x-list entries advance per code
+		// point (Chrome, WebKit) or per code unit (Gecko), so any glyph after
+		// a supplementary-plane rune or combining sequence would shift in one
+		// of them.
+		for singleUnit(cells[end-1]) && col < len(cells) {
 			if textCellVisible(cells[col]) {
+				if _, ok := blockCellShape(cells[col]); ok {
+					break
+				}
 				if r.textKey(cells[col].Style) != key {
 					break
 				}
@@ -664,6 +680,9 @@ func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 				gap++
 			}
 			if gap-col > textGapMax || gap >= len(cells) || r.textKey(cells[gap].Style) != key {
+				break
+			}
+			if _, ok := blockCellShape(cells[gap]); ok {
 				break
 			}
 			col = gap
@@ -739,6 +758,106 @@ func (r *Renderer) emitText(row int, cells []terminal.Cell) error {
 		}
 	}
 	return nil
+}
+
+// singleUnit reports whether the cell's emitted text is exactly one UTF-16
+// code unit, the only content whose x-list consumption every SVG engine
+// agrees on.
+func singleUnit(cell terminal.Cell) bool {
+	return cell.Rune() <= 0xFFFF && cell.Combining == ""
+}
+
+// blockShape describes a Block Elements glyph as a rectangle in cell-fraction
+// coordinates plus the glyph's ink coverage (1 for solid blocks, partial for
+// the ░▒▓ shades).
+type blockShape struct {
+	x0, y0, x1, y1 float64
+	alpha          float64
+}
+
+// blockShapeFor maps a Block Elements rune (U+2580–U+2595) to its rectangle.
+// These cells are drawn as exact rects instead of font glyphs: viewers rarely
+// have the recording font, and fallback fonts draw bars and shades with the
+// wrong ink coverage, visibly changing their color.
+func blockShapeFor(ch rune) (blockShape, bool) {
+	switch {
+	case ch == 0x2580: // ▀ upper half
+		return blockShape{0, 0, 1, 0.5, 1}, true
+	case ch >= 0x2581 && ch <= 0x2588: // ▁▂▃▄▅▆▇█ lower eighths, full block
+		return blockShape{0, 1 - float64(ch-0x2580)/8, 1, 1, 1}, true
+	case ch >= 0x2589 && ch <= 0x258F: // ▉▊▋▌▍▎▏ left eighths
+		return blockShape{0, 0, float64(0x2590-ch) / 8, 1, 1}, true
+	case ch == 0x2590: // ▐ right half
+		return blockShape{0.5, 0, 1, 1, 1}, true
+	case ch == 0x2591: // ░ light shade
+		return blockShape{0, 0, 1, 1, 0.25}, true
+	case ch == 0x2592: // ▒ medium shade
+		return blockShape{0, 0, 1, 1, 0.5}, true
+	case ch == 0x2593: // ▓ dark shade
+		return blockShape{0, 0, 1, 1, 0.75}, true
+	case ch == 0x2594: // ▔ upper eighth
+		return blockShape{0, 0, 1, 0.125, 1}, true
+	case ch == 0x2595: // ▕ right eighth
+		return blockShape{0.875, 0, 1, 1, 1}, true
+	}
+	return blockShape{}, false
+}
+
+// blockCellShape reports the rect shape for a cell drawn as a Block Elements
+// rune. Cells with combining marks, blink, or line decorations stay on the
+// text path so those effects keep rendering.
+func blockCellShape(cell terminal.Cell) (blockShape, bool) {
+	if cell.Combining != "" || cell.Style.Has(terminal.AttrBlink|terminal.AttrUnderline|terminal.AttrStrikethrough|terminal.AttrOverline) {
+		return blockShape{}, false
+	}
+	return blockShapeFor(cell.Rune())
+}
+
+// emitBlockRun draws adjacent identical block cells as a single rect and
+// returns the index after the run. Only full-width shapes merge; partial-width
+// shapes leave uncovered cell area, so each emits its own rect.
+func (r *Renderer) emitBlockRun(row int, start int, cells []terminal.Cell, shape blockShape) (int, error) {
+	key := r.textKey(cells[start].Style)
+	end := start + 1
+	fullWidth := shape.x0 == 0 && shape.x1 == 1
+	for fullWidth && end < len(cells) && textCellVisible(cells[end]) {
+		next, ok := blockCellShape(cells[end])
+		if !ok || next != shape || r.textKey(cells[end].Style) != key {
+			break
+		}
+		end++
+	}
+	x := r.cellPxX(float64(start) + shape.x0)
+	y := r.cellPxY(float64(row) + shape.y0)
+	w := r.cellPxX(float64(end-1)+shape.x1) - x
+	h := r.cellPxY(float64(row)+shape.y1) - y
+	// Sub-cell shapes can round to nothing at small cell sizes; the terminal
+	// still shows a hairline, so keep at least one pixel.
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	fill := r.fillToken(key.fg)
+	alpha := shape.alpha
+	if key.dim {
+		alpha *= 0.72 // matches the text path's dim opacity
+	}
+	if alpha < 1 {
+		fill += ` fill-opacity="` + trimFloat(strconv.FormatFloat(alpha, 'f', 4, 64)) + `"`
+	}
+	return end, r.writeRect(x, y, w, h, fill)
+}
+
+// cellPxX and cellPxY convert fractional grid coordinates to pixels with the
+// same absolute-position rounding as gridX/gridY.
+func (r *Renderer) cellPxX(col float64) int {
+	return int(math.Round(r.cfg.Padding + col*r.cfg.CellWidth))
+}
+
+func (r *Renderer) cellPxY(row float64) int {
+	return int(math.Round(r.cfg.Padding + row*r.cfg.CellHeight))
 }
 
 func (r *Renderer) emitCursor(row int, cells []terminal.Cell) error {

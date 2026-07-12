@@ -14,7 +14,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.0.9"
+var version = "0.1.0"
 
 // defaultCaptureInterval is the default minimum time between captured frames
 // (and the default idle-capture interval), i.e. 40 frames per second. Recording
