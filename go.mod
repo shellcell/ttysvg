@@ -1,4 +1,4 @@
-module github.com/rabarbra/ttysvg
+module github.com/shellcell/ttysvg
 
 go 1.26
 

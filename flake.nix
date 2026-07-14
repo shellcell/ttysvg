@@ -31,7 +31,7 @@
 
           meta = with pkgs.lib; {
             description = "Record terminal sessions as animated SVG";
-            homepage = "https://github.com/rabarbra/ttysvg";
+            homepage = "https://github.com/shellcell/ttysvg";
             license = licenses.mit;
             mainProgram = "ttysvg";
             platforms = platforms.unix;

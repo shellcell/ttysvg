@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/eventlog"
-	"github.com/rabarbra/ttysvg/internal/ptyrec"
-	"github.com/rabarbra/ttysvg/internal/svg"
-	"github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/eventlog"
+	"github.com/shellcell/ttysvg/internal/ptyrec"
+	"github.com/shellcell/ttysvg/internal/svg"
+	"github.com/shellcell/ttysvg/internal/terminal"
 	"golang.org/x/term"
 )
 

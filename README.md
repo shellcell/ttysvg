@@ -9,12 +9,12 @@ Output is declarative SVG animation (SMIL + CSS), no scripts, so it renders as a
 ## Install
 
 ```sh
-go install github.com/rabarbra/ttysvg/cmd/ttysvg@latest   # from source (Go 1.26+)
+go install github.com/shellcell/ttysvg/cmd/ttysvg@latest   # from source (Go 1.26+)
 brew install shellcell/tap/ttysvg                         # Homebrew
-nix run github:rabarbra/ttysvg                            # Nix flake
+nix run github:shellcell/ttysvg                            # Nix flake
 ```
 
-Prebuilt Linux/macOS binaries and `.deb`/`.rpm` packages are attached to each [GitHub release](https://github.com/rabarbra/ttysvg/releases).
+Prebuilt Linux/macOS binaries and `.deb`/`.rpm` packages are attached to each [GitHub release](https://github.com/shellcell/ttysvg/releases).
 
 ## Usage
 
@@ -101,13 +101,13 @@ With a non-TTY stdout, `ttysvg` records directly — no pane, no `Ctrl-\` — an
 # GitHub Actions
 - uses: actions/setup-go@v5
   with: { go-version-file: go.mod }
-- run: go install github.com/rabarbra/ttysvg/cmd/ttysvg@latest
+- run: go install github.com/shellcell/ttysvg/cmd/ttysvg@latest
 - run: ttysvg -q -size 100x30 -o out.svg -- make test
 - uses: actions/upload-artifact@v4
   with: { name: terminal-recording, path: out.svg }
 ```
 
-Elsewhere (GitLab CI and other runners), use the published image `ghcr.io/rabarbra/ttysvg:latest` and the same `ttysvg -q -size 100x30 -o out.svg -- make test` invocation.
+Elsewhere (GitLab CI and other runners), use the published image `ghcr.io/shellcell/ttysvg:latest` and the same `ttysvg -q -size 100x30 -o out.svg -- make test` invocation.
 
 ## How it works
 

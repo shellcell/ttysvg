@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	termemu "github.com/rabarbra/ttysvg/internal/terminal"
+	termemu "github.com/shellcell/ttysvg/internal/terminal"
 	"golang.org/x/term"
 )
 

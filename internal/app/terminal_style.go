@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rabarbra/ttysvg/internal/svg"
+	"github.com/shellcell/ttysvg/internal/svg"
 )
 
 // terminalStyle holds the colors, theme, and font reported by the live

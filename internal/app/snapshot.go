@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rabarbra/ttysvg/internal/svg"
-	"github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/svg"
+	"github.com/shellcell/ttysvg/internal/terminal"
 )
 
 func renderSnapshot(path string, cfg Config, frame terminal.Frame) (renderStats, error) {

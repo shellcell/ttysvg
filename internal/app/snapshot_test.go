@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/terminal"
 )
 
 func TestTextSnapshotLinesTrimPaddingAndBlankBottom(t *testing.T) {

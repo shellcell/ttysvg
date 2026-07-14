@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/terminal"
 )
 
 type Config struct {

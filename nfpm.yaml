@@ -17,8 +17,8 @@ description: |
   Record terminal sessions as animated SVG.
   ttysvg records an interactive terminal session in a child PTY and converts the
   captured output into a self-contained, script-free animated SVG.
-vendor: rabarbra
-homepage: https://github.com/rabarbra/ttysvg
+vendor: shellcell
+homepage: https://github.com/shellcell/ttysvg
 license: MIT
 contents:
   - src: ${PKG_BIN}

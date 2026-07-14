@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/terminal"
 )
 
 // benchFrame builds a row of styled, mostly-text cells to exercise the per-cell

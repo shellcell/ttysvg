@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/app"
+	"github.com/shellcell/ttysvg/internal/app"
 	"golang.org/x/term"
 )
 
-var version = "0.1.0"
+var version = "0.1.1"
 
 // defaultCaptureInterval is the default minimum time between captured frames
 // (and the default idle-capture interval), i.e. 40 frames per second. Recording

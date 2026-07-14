@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/eventlog"
+	"github.com/shellcell/ttysvg/internal/eventlog"
 )
 
 func readAllRecords(t *testing.T, buf *bytes.Buffer) []eventlog.Record {

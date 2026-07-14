@@ -3,8 +3,8 @@ package app
 import (
 	"strings"
 
-	"github.com/rabarbra/ttysvg/internal/svg"
-	termemu "github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/svg"
+	termemu "github.com/shellcell/ttysvg/internal/terminal"
 )
 
 type livePalette struct {

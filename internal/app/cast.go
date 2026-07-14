@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/eventlog"
+	"github.com/shellcell/ttysvg/internal/eventlog"
 )
 
 // castHeader is the first line of an asciinema recording. v2 stores the size

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/eventlog"
-	"github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/eventlog"
+	"github.com/shellcell/ttysvg/internal/terminal"
 )
 
 func TestReplayAvoidsIntervalCaptureInAlternateScreen(t *testing.T) {

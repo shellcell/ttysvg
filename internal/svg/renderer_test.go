@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/terminal"
+	"github.com/shellcell/ttysvg/internal/terminal"
 )
 
 func TestRendererPositionsRunsAfterSpaces(t *testing.T) {

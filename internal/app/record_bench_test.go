@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rabarbra/ttysvg/internal/eventlog"
+	"github.com/shellcell/ttysvg/internal/eventlog"
 )
 
 // recordChunk is a representative burst of child output (styled text + newline).
