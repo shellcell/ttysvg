@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +15,9 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.1.1"
+// version is the release tag (vX.Y.Z), injected at build time via
+// -ldflags "-X main.version=...".
+var version = "dev"
 
 // defaultCaptureInterval is the default minimum time between captured frames
 // (and the default idle-capture interval), i.e. 40 frames per second. Recording
@@ -122,7 +125,7 @@ func run(args []string) (int, error) {
 		return 2, err
 	}
 	if showVersion {
-		fmt.Fprintf(os.Stdout, "ttysvg %s\n", version)
+		fmt.Fprintf(os.Stdout, "ttysvg %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
 		return 0, nil
 	}
 

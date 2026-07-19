@@ -102,3 +102,17 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes-file dist/release-notes.md \
             dist/*.tar.gz dist/*.deb dist/*.rpm dist/checksums.txt dist/SIZES.txt dist/BENCHMARKS.md
+
+  bump-tap:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Homebrew formula bump
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          gh api repos/shellcell/homebrew-tap/dispatches \
+            -f event_type=bump-formula \
+            -f 'client_payload[formula]=ttysvg' \
+            -f "client_payload[version]=${GITHUB_REF_NAME#v}"
