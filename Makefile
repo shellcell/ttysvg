@@ -85,18 +85,18 @@ size-report: build-release
 		printf '%-36s %12s\n' "$${name}" "$${mb}"; \
 	done | tee -a "$(DIST)/SIZES.txt"
 
-# Build .deb and .rpm packages from the prebuilt linux binaries using nfpm.
+# Build .deb/.rpm/.apk packages from the prebuilt linux binaries using nfpm.
 # Covers amd64 and arm64, which is what apt/dnf users overwhelmingly need.
 # Override with `make packages NFPM_ARCHES="amd64"` to limit the set.
 NFPM_ARCHES ?= amd64 arm64
 PKG_VERSION ?= $(patsubst v%,%,$(VERSION))
 
-packages: build-release | $(DIST)
+packages: | $(DIST)
 	@command -v nfpm >/dev/null 2>&1 || { printf 'nfpm is required to build packages: https://nfpm.goreleaser.com\n'; exit 1; }
 	@for arch in $(NFPM_ARCHES); do \
 		bin="$(DIST)/$(APP)-$(VERSION)-linux-$$arch/$(APP)"; \
 		[ -f "$$bin" ] || { printf 'missing %s; run make build-release first\n' "$$bin"; exit 1; }; \
-		for fmt in deb rpm; do \
+		for fmt in deb rpm apk; do \
 			printf 'packaging %s (%s)\n' "$$arch" "$$fmt"; \
 			PKG_VERSION="$(PKG_VERSION)" PKG_ARCH="$$arch" PKG_BIN="$$bin" \
 				envsubst < nfpm.yaml > "$(DIST)/nfpm.$$arch.$$fmt.yaml"; \

@@ -1,4 +1,4 @@
-# nfpm configuration for building .deb and .rpm packages.
+# nfpm configuration for building .deb, .rpm and .apk packages.
 #
 # Driven by environment variables so one config covers every arch:
 #   PKG_VERSION  package version (without a leading "v")
