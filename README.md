@@ -8,13 +8,51 @@ Output is declarative SVG animation (SMIL + CSS), no scripts, so it renders as a
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
 ```sh
-go install github.com/shellcell/ttysvg/cmd/ttysvg@latest   # from source (Go 1.26+)
-brew install shellcell/tap/ttysvg                         # Homebrew
+brew install shellcell/tap/ttysvg
+```
+
+### Linux packages (apt / dnf / apk)
+
+Enable the shellcell repository once — setup instructions at
+<https://packages.shellcell.dev> — then:
+
+```sh
+sudo apt install ttysvg   # Debian / Ubuntu
+sudo dnf install ttysvg   # Fedora / RHEL
+sudo apk add ttysvg       # Alpine
+```
+
+### Arch (AUR)
+
+With an AUR helper (e.g. `paru` or `yay`):
+
+```sh
+paru -S ttysvg       # builds from source
+paru -S ttysvg-bin   # prebuilt binary
+```
+
+Or manually:
+
+```sh
+git clone https://aur.archlinux.org/ttysvg.git   # or ttysvg-bin.git
+cd ttysvg && makepkg -si
+```
+
+### Go and Nix
+
+```sh
+go install github.com/shellcell/ttysvg/cmd/ttysvg@latest   # Go 1.26+
 nix run github:shellcell/ttysvg                            # Nix flake
 ```
 
-Prebuilt Linux/macOS binaries and `.deb`/`.rpm` packages are attached to each [GitHub release](https://github.com/shellcell/ttysvg/releases).
+### Prebuilt binaries
+
+Download the archive for your OS/arch from
+[Releases](https://github.com/shellcell/ttysvg/releases); each contains the
+binary, man page, and shell completions.
 
 ## Usage
 
